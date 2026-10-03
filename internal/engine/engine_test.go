@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -321,5 +322,77 @@ func TestShutdownCancelsRuns(t *testing.T) {
 	}
 	if _, err := f.engine.Start(context.Background(), build([]stepSpec{{id: "a", block: "echo"}})); err == nil {
 		t.Error("Start after Shutdown succeeded")
+	}
+}
+
+type recorder struct {
+	mu     sync.Mutex
+	events []run.Event
+	ended  bool
+}
+
+func (r *recorder) Publish(_ string, e run.Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, e)
+}
+
+func (r *recorder) End(string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ended = true
+}
+
+func TestPublishesEvents(t *testing.T) {
+	f := newFixture(t, 8)
+	rec := &recorder{}
+	f.engine.events = rec
+
+	r, _ := f.runToEnd(t, build([]stepSpec{
+		{id: "say", block: "echo"},
+		{id: "boom", block: "fail"},
+		{id: "after", block: "echo"},
+	}, "boom>after"))
+	_ = f.engine.Shutdown(context.Background()) // wait for the run goroutine to return
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if !rec.ended {
+		t.Fatal("End was not called")
+	}
+
+	var trail []string
+	logLines := 0
+	for _, e := range rec.events {
+		switch e.Type {
+		case run.EventRun:
+			trail = append(trail, "run:"+string(e.State.Status))
+		case run.EventStep:
+			trail = append(trail, e.Step.StepID+":"+string(e.Step.Status))
+		case run.EventLogs:
+			for _, l := range e.Lines {
+				if l.Seq == 0 {
+					t.Errorf("log line without seq: %+v", l)
+				}
+			}
+			logLines += len(e.Lines)
+		}
+	}
+	joined := strings.Join(trail, " ")
+	for _, want := range []string{"run:running", "say:running", "say:succeeded", "boom:failed", "after:skipped", "run:failed"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("events %q missing %q", joined, want)
+		}
+	}
+	if !strings.HasPrefix(joined, "run:running") || !strings.HasSuffix(joined, "run:"+string(r.Status)) {
+		t.Errorf("run events out of order: %q", joined)
+	}
+	stored, _ := f.runs.Logs(context.Background(), r.ID, "", 0, 0)
+	if logLines != len(stored) {
+		t.Errorf("published %d log lines, stored %d", logLines, len(stored))
+	}
+	last := rec.events[len(rec.events)-1]
+	if last.Type != run.EventRun {
+		t.Errorf("last event = %s, want the final run state after all logs", last.Type)
 	}
 }

@@ -31,12 +31,15 @@ type Options struct {
 	Runs   run.Repository
 	Blocks *block.Registry
 	Log    *slog.Logger
+	// Events receives live progress; nil discards it.
+	Events run.Publisher
 	// MaxParallel caps how many steps of one run execute at the same time.
 	MaxParallel int
 }
 
 type Engine struct {
 	runs        run.Repository
+	events      run.Publisher
 	blocks      *block.Registry
 	log         *slog.Logger
 	maxParallel int
@@ -52,8 +55,12 @@ func New(o Options) *Engine {
 	if o.MaxParallel <= 0 {
 		o.MaxParallel = 8
 	}
+	if o.Events == nil {
+		o.Events = nopPublisher{}
+	}
 	return &Engine{
 		runs:        o.Runs,
+		events:      o.Events,
 		blocks:      o.Blocks,
 		log:         o.Log,
 		maxParallel: o.MaxParallel,
@@ -168,3 +175,8 @@ func (e *Engine) Check(wf workflow.Workflow) error {
 	}
 	return nil
 }
+
+type nopPublisher struct{}
+
+func (nopPublisher) Publish(string, run.Event) {}
+func (nopPublisher) End(string)                {}

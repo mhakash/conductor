@@ -15,6 +15,7 @@ import (
 	"conductor/internal/block"
 	"conductor/internal/config"
 	"conductor/internal/engine"
+	"conductor/internal/events"
 	"conductor/internal/server"
 	"conductor/internal/store"
 	"conductor/internal/version"
@@ -57,25 +58,29 @@ func run() error {
 	}
 
 	blocks := block.Builtin()
-	eng := engine.New(engine.Options{Runs: runs, Blocks: blocks, Log: log, MaxParallel: cfg.MaxParallel})
+	broker := events.NewBroker()
+	eng := engine.New(engine.Options{Runs: runs, Blocks: blocks, Events: broker, Log: log, MaxParallel: cfg.MaxParallel})
 
 	ui := web.UI()
 	if cfg.Dev {
 		ui = nil
 	}
 
+	srv := server.New(server.Deps{
+		Log:       log,
+		Workflows: store.NewWorkflows(db),
+		Runs:      runs,
+		Engine:    eng,
+		Broker:    broker,
+		Blocks:    blocks,
+		UI:        ui,
+	})
 	httpServer := &http.Server{
-		Addr: cfg.Addr,
-		Handler: server.New(server.Deps{
-			Log:       log,
-			Workflows: store.NewWorkflows(db),
-			Runs:      runs,
-			Engine:    eng,
-			Blocks:    blocks,
-			UI:        ui,
-		}).Handler(),
+		Addr:              cfg.Addr,
+		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	httpServer.RegisterOnShutdown(srv.CloseStreams)
 
 	errc := make(chan error, 1)
 	go func() {

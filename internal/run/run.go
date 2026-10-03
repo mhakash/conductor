@@ -104,11 +104,52 @@ type Repository interface {
 	StartStep(ctx context.Context, runID, stepID string, at time.Time) error
 	FinishStep(ctx context.Context, runID, stepID string, status Status, outputs json.RawMessage, errMsg string, at time.Time) error
 
-	AppendLogs(ctx context.Context, runID string, lines []LogLine) error
+	// AppendLogs stores lines and returns them with their Seq assigned.
+	AppendLogs(ctx context.Context, runID string, lines []LogLine) ([]LogLine, error)
 	// Logs returns lines with Seq > after, oldest first. stepID "" means all steps.
 	Logs(ctx context.Context, runID, stepID string, after int64, limit int) ([]LogLine, error)
 
 	// FailUnfinished marks runs and steps left queued or running (e.g. by a
 	// crash) as failed with msg. It returns how many runs it touched.
 	FailUnfinished(ctx context.Context, msg string, at time.Time) (int, error)
+}
+
+// EventType names a change to a run, streamed to clients as it happens.
+type EventType string
+
+const (
+	// EventSnapshot carries the full run and its logs so far; it is always
+	// the first event on a stream, so later events can be applied as deltas.
+	EventSnapshot EventType = "snapshot"
+	EventRun      EventType = "run"
+	EventStep     EventType = "step"
+	EventLogs     EventType = "logs"
+	// EventEnd says the run has finished and the stream will close.
+	EventEnd EventType = "end"
+)
+
+// State is the run-level part of a Run, sent when the run starts or finishes.
+type State struct {
+	Status     Status     `json:"status"`
+	Error      string     `json:"error,omitempty"`
+	StartedAt  *time.Time `json:"startedAt"`
+	FinishedAt *time.Time `json:"finishedAt"`
+}
+
+// Event is one message on a run's stream. Step and log events carry complete
+// values (a step's whole state, lines with their seq), so applying an event
+// twice is harmless.
+type Event struct {
+	Type  EventType `json:"type"`
+	Run   *Run      `json:"run,omitempty"`
+	State *State    `json:"state,omitempty"`
+	Step  *StepRun  `json:"step,omitempty"`
+	Lines []LogLine `json:"lines,omitempty"`
+}
+
+// Publisher receives events as the engine records them.
+type Publisher interface {
+	Publish(runID string, e Event)
+	// End delivers EventEnd and closes all streams for the run.
+	End(runID string)
 }

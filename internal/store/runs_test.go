@@ -41,10 +41,14 @@ func TestRunLifecycle(t *testing.T) {
 	now := time.Now().UTC()
 	must(t, s.StartRun(ctx, r.ID, now))
 	must(t, s.StartStep(ctx, r.ID, "tag", now))
-	must(t, s.AppendLogs(ctx, r.ID, []run.LogLine{
+	appended, err := s.AppendLogs(ctx, r.ID, []run.LogLine{
 		{StepID: "tag", Stream: run.StreamStdout, Text: "tagged", Time: now},
 		{StepID: "tag", Stream: run.StreamStderr, Text: "warning", Time: now},
-	}))
+	})
+	must(t, err)
+	if appended[0].Seq == 0 || appended[1].Seq <= appended[0].Seq {
+		t.Errorf("appended seqs = %d, %d", appended[0].Seq, appended[1].Seq)
+	}
 	must(t, s.FinishStep(ctx, r.ID, "tag", run.StatusSucceeded, json.RawMessage(`{"exitCode":0}`), "", now))
 	must(t, s.FinishRun(ctx, r.ID, run.StatusSucceeded, "", now))
 

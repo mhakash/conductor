@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -13,6 +14,7 @@ import (
 
 	"conductor/internal/block"
 	"conductor/internal/engine"
+	"conductor/internal/events"
 	"conductor/internal/run"
 	"conductor/internal/version"
 	"conductor/internal/workflow"
@@ -23,6 +25,7 @@ type Deps struct {
 	Workflows workflow.Repository
 	Runs      run.Repository
 	Engine    *engine.Engine
+	Broker    *events.Broker
 	Blocks    *block.Registry
 	// UI is the built frontend; nil serves only the API.
 	UI fs.FS
@@ -33,9 +36,15 @@ type Server struct {
 	workflows workflow.Repository
 	runs      run.Repository
 	engine    *engine.Engine
+	broker    *events.Broker
 	blocks    *block.Registry
 	ui        fs.FS
 	started   time.Time
+
+	// closing is closed on shutdown to end long-lived event streams, which
+	// would otherwise keep http.Server.Shutdown waiting.
+	closing   chan struct{}
+	closeOnce sync.Once
 }
 
 func New(d Deps) *Server {
@@ -44,10 +53,18 @@ func New(d Deps) *Server {
 		workflows: d.Workflows,
 		runs:      d.Runs,
 		engine:    d.Engine,
+		broker:    d.Broker,
+		closing:   make(chan struct{}),
 		blocks:    d.Blocks,
 		ui:        d.UI,
 		started:   time.Now(),
 	}
+}
+
+// CloseStreams ends all open event streams. Register it with
+// http.Server.RegisterOnShutdown.
+func (s *Server) CloseStreams() {
+	s.closeOnce.Do(func() { close(s.closing) })
 }
 
 func (s *Server) Handler() http.Handler {
@@ -72,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/", s.handleListRuns)
 			r.Get("/{id}", s.handleGetRun)
 			r.Get("/{id}/logs", s.handleRunLogs)
+			r.Get("/{id}/events", s.handleRunEvents)
 			r.Post("/{id}/cancel", s.handleCancelRun)
 		})
 		r.NotFound(func(w http.ResponseWriter, _ *http.Request) {

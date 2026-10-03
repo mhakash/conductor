@@ -13,10 +13,11 @@ import (
 )
 
 type stepResult struct {
-	id      string
-	status  run.Status
-	outputs map[string]any
-	err     string
+	id        string
+	status    run.Status
+	outputs   map[string]any
+	err       string
+	startedAt *time.Time
 }
 
 // execute runs r to completion. Steps start as soon as all their
@@ -27,14 +28,16 @@ func (e *Engine) execute(ctx context.Context, r run.Run) {
 	store := context.WithoutCancel(ctx)
 	log := e.log.With("run", r.ID)
 
-	if err := e.runs.StartRun(store, r.ID, e.now()); err != nil {
+	started := e.now()
+	if err := e.runs.StartRun(store, r.ID, started); err != nil {
 		log.Error("start run", "err", err)
+		e.events.End(r.ID)
 		return
 	}
+	e.events.Publish(r.ID, run.Event{Type: run.EventRun, State: &run.State{Status: run.StatusRunning, StartedAt: &started}})
 	log.Info("run started", "workflow", r.WorkflowName, "steps", len(r.Definition.Steps))
 
-	sink := newLogSink(store, e.runs, r.ID, log)
-	defer sink.Close()
+	sink := newLogSink(store, e.runs, e.events, r.ID, log)
 
 	steps := make(map[string]workflow.Step, len(r.Definition.Steps))
 	waitingOn := make(map[string]int, len(r.Definition.Steps))
@@ -66,7 +69,22 @@ func (e *Engine) execute(ctx context.Context, r run.Run) {
 		}()
 	}
 
-	// close marks every not-yet-finished step downstream of id with status.
+	finishStep := func(res stepResult) {
+		outputs, err := json.Marshal(res.outputs)
+		if err != nil || res.outputs == nil {
+			outputs = json.RawMessage("{}")
+		}
+		at := e.now()
+		if err := e.runs.FinishStep(store, r.ID, res.id, res.status, outputs, res.err, at); err != nil {
+			log.Error("finish step", "step", res.id, "err", err)
+		}
+		e.events.Publish(r.ID, run.Event{Type: run.EventStep, Step: &run.StepRun{
+			StepID: res.id, Status: res.status, Error: res.err, Outputs: outputs,
+			StartedAt: res.startedAt, FinishedAt: &at,
+		}})
+	}
+
+	// closeDownstream marks every not-yet-finished step downstream of id with status.
 	var closeDownstream func(id string, status run.Status, reason string)
 	closeDownstream = func(id string, status run.Status, reason string) {
 		for _, next := range dependents[id] {
@@ -75,9 +93,7 @@ func (e *Engine) execute(ctx context.Context, r run.Run) {
 			}
 			finished[next] = true
 			pending--
-			if err := e.runs.FinishStep(store, r.ID, next, status, nil, reason, e.now()); err != nil {
-				log.Error("finish step", "step", next, "err", err)
-			}
+			finishStep(stepResult{id: next, status: status, err: reason})
 			closeDownstream(next, status, reason)
 		}
 	}
@@ -93,14 +109,7 @@ func (e *Engine) execute(ctx context.Context, r run.Run) {
 		res := <-results
 		finished[res.id] = true
 		pending--
-
-		outputs, err := json.Marshal(res.outputs)
-		if err != nil {
-			outputs = nil
-		}
-		if err := e.runs.FinishStep(store, r.ID, res.id, res.status, outputs, res.err, e.now()); err != nil {
-			log.Error("finish step", "step", res.id, "err", err)
-		}
+		finishStep(res)
 
 		switch res.status {
 		case run.StatusSucceeded:
@@ -125,9 +134,16 @@ func (e *Engine) execute(ctx context.Context, r run.Run) {
 	case failed:
 		status = run.StatusFailed
 	}
-	if err := e.runs.FinishRun(store, r.ID, status, msg, e.now()); err != nil {
+	// Flush logs first so the stream never ends with lines still unsent.
+	sink.Close()
+	finishedAt := e.now()
+	if err := e.runs.FinishRun(store, r.ID, status, msg, finishedAt); err != nil {
 		log.Error("finish run", "err", err)
 	}
+	e.events.Publish(r.ID, run.Event{Type: run.EventRun, State: &run.State{
+		Status: status, Error: msg, StartedAt: &started, FinishedAt: &finishedAt,
+	}})
+	e.events.End(r.ID)
 	log.Info("run finished", "status", status)
 }
 
@@ -141,15 +157,19 @@ func (e *Engine) runStep(ctx, store context.Context, runID string, s workflow.St
 	stepCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	if err := e.runs.StartStep(store, runID, s.ID, e.now()); err != nil {
+	startedAt := e.now()
+	if err := e.runs.StartStep(store, runID, s.ID, startedAt); err != nil {
 		e.log.Error("start step", "run", runID, "step", s.ID, "err", err)
 	}
+	e.events.Publish(runID, run.Event{Type: run.EventStep, Step: &run.StepRun{
+		StepID: s.ID, Status: run.StatusRunning, Outputs: json.RawMessage("{}"), StartedAt: &startedAt,
+	}})
 
 	env, flush := sink.envFor(s.ID)
 	outputs, err := safeRun(stepCtx, b.Run, s.Config, env)
 	flush()
 
-	res := stepResult{id: s.ID, status: run.StatusSucceeded, outputs: outputs}
+	res := stepResult{id: s.ID, status: run.StatusSucceeded, outputs: outputs, startedAt: &startedAt}
 	switch {
 	case err == nil:
 	case ctx.Err() != nil:

@@ -13,6 +13,7 @@ import (
 
 	"conductor/internal/block"
 	"conductor/internal/engine"
+	"conductor/internal/events"
 	"conductor/internal/store"
 )
 
@@ -31,7 +32,8 @@ func newTestServer(t *testing.T) *httptest.Server {
 
 	runs := store.NewRuns(db)
 	blocks := block.Builtin()
-	eng := engine.New(engine.Options{Runs: runs, Blocks: blocks, Log: log})
+	broker := events.NewBroker()
+	eng := engine.New(engine.Options{Runs: runs, Blocks: blocks, Events: broker, Log: log})
 	t.Cleanup(func() { _ = eng.Shutdown(context.Background()) })
 
 	srv := httptest.NewServer(New(Deps{
@@ -39,6 +41,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 		Workflows: store.NewWorkflows(db),
 		Runs:      runs,
 		Engine:    eng,
+		Broker:    broker,
 		Blocks:    blocks,
 		UI:        ui,
 	}).Handler())

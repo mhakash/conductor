@@ -21,10 +21,11 @@ const (
 // logSink collects log lines from all steps of a run and writes them to the
 // store in batches, so a chatty command doesn't mean one insert per line.
 type logSink struct {
-	ctx   context.Context
-	runs  run.Repository
-	runID string
-	log   *slog.Logger
+	ctx    context.Context
+	runs   run.Repository
+	events run.Publisher
+	runID  string
+	log    *slog.Logger
 
 	mu    sync.Mutex
 	batch []run.LogLine
@@ -33,14 +34,15 @@ type logSink struct {
 	done chan struct{}
 }
 
-func newLogSink(ctx context.Context, runs run.Repository, runID string, log *slog.Logger) *logSink {
+func newLogSink(ctx context.Context, runs run.Repository, events run.Publisher, runID string, log *slog.Logger) *logSink {
 	s := &logSink{
-		ctx:   ctx,
-		runs:  runs,
-		runID: runID,
-		log:   log,
-		stop:  make(chan struct{}),
-		done:  make(chan struct{}),
+		ctx:    ctx,
+		runs:   runs,
+		events: events,
+		runID:  runID,
+		log:    log,
+		stop:   make(chan struct{}),
+		done:   make(chan struct{}),
 	}
 	go s.loop()
 	return s
@@ -79,9 +81,15 @@ func (s *logSink) flush() {
 	batch := s.batch
 	s.batch = nil
 	s.mu.Unlock()
-	if err := s.runs.AppendLogs(s.ctx, s.runID, batch); err != nil {
-		s.log.Error("write logs", "err", err, "lines", len(batch))
+	if len(batch) == 0 {
+		return
 	}
+	stored, err := s.runs.AppendLogs(s.ctx, s.runID, batch)
+	if err != nil {
+		s.log.Error("write logs", "err", err, "lines", len(batch))
+		return
+	}
+	s.events.Publish(s.runID, run.Event{Type: run.EventLogs, Lines: stored})
 }
 
 // Close writes any remaining lines and stops the flusher.

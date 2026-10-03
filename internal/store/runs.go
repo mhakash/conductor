@@ -191,28 +191,35 @@ func (s *Runs) FinishStep(ctx context.Context, runID, stepID string, status run.
 		status, string(outputs), errMsg, formatTime(at), runID, stepID)
 }
 
-func (s *Runs) AppendLogs(ctx context.Context, runID string, lines []run.LogLine) error {
+func (s *Runs) AppendLogs(ctx context.Context, runID string, lines []run.LogLine) ([]run.LogLine, error) {
 	if len(lines) == 0 {
-		return nil
+		return nil, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO run_logs (run_id, step_id, stream, text, time) VALUES (?, ?, ?, ?, ?)`)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer stmt.Close()
-	for _, l := range lines {
-		if _, err := stmt.ExecContext(ctx, runID, l.StepID, l.Stream, l.Text, formatTime(l.Time)); err != nil {
-			return fmt.Errorf("insert log line: %w", err)
+
+	out := make([]run.LogLine, len(lines))
+	for i, l := range lines {
+		res, err := stmt.ExecContext(ctx, runID, l.StepID, l.Stream, l.Text, formatTime(l.Time))
+		if err != nil {
+			return nil, fmt.Errorf("insert log line: %w", err)
 		}
+		if l.Seq, err = res.LastInsertId(); err != nil {
+			return nil, err
+		}
+		out[i] = l
 	}
-	return tx.Commit()
+	return out, tx.Commit()
 }
 
 func (s *Runs) Logs(ctx context.Context, runID, stepID string, after int64, limit int) ([]run.LogLine, error) {
