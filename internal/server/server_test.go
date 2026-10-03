@@ -1,13 +1,18 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"testing/fstest"
+
+	"conductor/internal/block"
+	"conductor/internal/store"
 )
 
 func newTestServer(t *testing.T) *httptest.Server {
@@ -16,7 +21,19 @@ func newTestServer(t *testing.T) *httptest.Server {
 		"index.html":    {Data: []byte("<html>app</html>")},
 		"assets/app.js": {Data: []byte("console.log(1)")},
 	}
-	srv := httptest.NewServer(New(slog.New(slog.DiscardHandler), ui).Handler())
+	log := slog.New(slog.DiscardHandler)
+	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"), log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	srv := httptest.NewServer(New(Deps{
+		Log:       log,
+		Workflows: store.NewWorkflows(db),
+		Blocks:    block.Builtin(),
+		UI:        ui,
+	}).Handler())
 	t.Cleanup(srv.Close)
 	return srv
 }

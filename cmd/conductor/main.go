@@ -8,11 +8,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"conductor/internal/block"
 	"conductor/internal/config"
 	"conductor/internal/server"
+	"conductor/internal/store"
 	"conductor/internal/version"
 	"conductor/web"
 )
@@ -36,19 +39,30 @@ func run() error {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	db, err := store.Open(ctx, filepath.Join(cfg.DataDir, "conductor.db"), log)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
 	ui := web.UI()
 	if cfg.Dev {
 		ui = nil
 	}
 
 	httpServer := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           server.New(log, ui).Handler(),
+		Addr: cfg.Addr,
+		Handler: server.New(server.Deps{
+			Log:       log,
+			Workflows: store.NewWorkflows(db),
+			Blocks:    block.Builtin(),
+			UI:        ui,
+		}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	errc := make(chan error, 1)
 	go func() {

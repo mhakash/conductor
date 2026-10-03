@@ -11,18 +11,35 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"conductor/internal/block"
 	"conductor/internal/version"
+	"conductor/internal/workflow"
 )
 
-type Server struct {
-	log     *slog.Logger
-	ui      fs.FS
-	started time.Time
+type Deps struct {
+	Log       *slog.Logger
+	Workflows workflow.Repository
+	Blocks    *block.Registry
+	// UI is the built frontend; nil serves only the API.
+	UI fs.FS
 }
 
-// New returns a server. ui may be nil, in which case only the API is served.
-func New(log *slog.Logger, ui fs.FS) *Server {
-	return &Server{log: log, ui: ui, started: time.Now()}
+type Server struct {
+	log       *slog.Logger
+	workflows workflow.Repository
+	blocks    *block.Registry
+	ui        fs.FS
+	started   time.Time
+}
+
+func New(d Deps) *Server {
+	return &Server{
+		log:       d.Log,
+		workflows: d.Workflows,
+		blocks:    d.Blocks,
+		ui:        d.UI,
+		started:   time.Now(),
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -34,6 +51,14 @@ func (s *Server) Handler() http.Handler {
 
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/health", s.handleHealth)
+		r.Get("/blocks", s.handleListBlocks)
+		r.Route("/workflows", func(r chi.Router) {
+			r.Get("/", s.handleListWorkflows)
+			r.Post("/", s.handleCreateWorkflow)
+			r.Get("/{id}", s.handleGetWorkflow)
+			r.Put("/{id}", s.handleUpdateWorkflow)
+			r.Delete("/{id}", s.handleDeleteWorkflow)
+		})
 		r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 			writeError(w, http.StatusNotFound, "no such endpoint")
 		})
