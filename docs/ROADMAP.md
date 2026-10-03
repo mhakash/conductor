@@ -20,7 +20,7 @@ Steps without a dependency path between them run in parallel.
 
 - [x] **0 — Foundations.** Repo layout, Go API server, React app shell, design
       tokens, dev/build tooling, single-binary build with the UI embedded.
-- [ ] **1 — Workflow editor.** SQLite storage, workflow CRUD, React Flow canvas,
+- [x] **1 — Workflow editor.** SQLite storage, workflow CRUD, React Flow canvas,
       block palette, drag/connect, step config panel, save/load.
 - [ ] **2 — Engine v1.** DAG validation and scheduler, parallel execution,
       cancellation, timeouts. `shell` and `http` blocks.

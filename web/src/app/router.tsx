@@ -10,6 +10,13 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/workflows" replace /> },
       { path: 'workflows', element: <WorkflowsPage /> },
+      {
+        // The editor pulls in React Flow and CodeMirror; load it on demand.
+        path: 'workflows/:id',
+        lazy: async () => ({
+          Component: (await import('@/features/editor/EditorPage')).EditorPage,
+        }),
+      },
       { path: 'runs', element: <RunsPage /> },
       { path: '*', element: <Navigate to="/workflows" replace /> },
     ],

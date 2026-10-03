@@ -17,7 +17,7 @@ dev: ## Run API and UI with hot reload (http://localhost:5180)
 	wait
 
 dev-api: ## Run the Go API on :7070
-	go run ./cmd/conductor --dev
+	go run ./cmd/conductor --dev --data-dir .data
 
 dev-web: ## Run the Vite dev server on :5180
 	cd web && pnpm dev
@@ -28,7 +28,7 @@ build: ## Build a single binary with the UI embedded into ./bin/conductor
 
 test: ## Run all tests
 	go test ./...
-	cd web && pnpm typecheck
+	cd web && pnpm typecheck && pnpm test
 
 lint: ## Vet Go code and lint the frontend
 	go vet ./...

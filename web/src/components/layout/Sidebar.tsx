@@ -4,6 +4,7 @@ import { NavLink } from 'react-router'
 
 import { Tooltip } from '@/components/ui/Tooltip'
 import { EngineStatus } from '@/features/engine/EngineStatus'
+import { cn } from '@/lib/cn'
 
 type NavItem = { to: string; label: string; icon: LucideIcon }
 
@@ -12,27 +13,41 @@ const nav: NavItem[] = [
   { to: '/runs', label: 'Runs', icon: History },
 ]
 
-export function Sidebar() {
+/**
+ * Full width from md up, an icon rail below that. `rail` forces the icon rail
+ * at every size, for pages that need the room (the editor).
+ */
+export function Sidebar({ rail = false }: { rail?: boolean }) {
+  const wide = !rail
   return (
-    <aside className="flex w-14 shrink-0 flex-col border-r border-line bg-surface md:w-56">
-      <div className="flex h-14 items-center justify-center px-4 md:justify-start">
-        <span className="font-display text-2xl text-fg italic md:hidden">C</span>
-        <span className="hidden font-display text-2xl tracking-tight text-fg italic md:inline">
-          Conductor
-        </span>
+    <aside
+      className={cn(
+        'flex w-14 shrink-0 flex-col border-r border-line bg-surface transition-[width] duration-200',
+        wide && 'md:w-56',
+      )}
+    >
+      <div className={cn('flex h-14 items-center justify-center px-4', wide && 'md:justify-start')}>
+        <span className={cn('font-display text-2xl text-fg italic', wide && 'md:hidden')}>C</span>
+        {wide && (
+          <span className="hidden font-display text-2xl tracking-tight text-fg italic md:inline">
+            Conductor
+          </span>
+        )}
       </div>
 
       <nav aria-label="Main" className="flex flex-1 flex-col gap-0.5 px-2 pt-2">
         {nav.map((item) => (
-          <SidebarLink key={item.to} item={item} />
+          <SidebarLink key={item.to} item={item} wide={wide} />
         ))}
       </nav>
 
       <div className="border-t border-line p-2">
-        <div className="hidden md:block">
-          <EngineStatus />
-        </div>
-        <div className="flex justify-center md:hidden">
+        {wide && (
+          <div className="hidden md:block">
+            <EngineStatus />
+          </div>
+        )}
+        <div className={cn('flex justify-center', wide && 'md:hidden')}>
           <EngineStatus compact />
         </div>
       </div>
@@ -40,15 +55,18 @@ export function Sidebar() {
   )
 }
 
-function SidebarLink({ item }: { item: NavItem }) {
+function SidebarLink({ item, wide }: { item: NavItem; wide: boolean }) {
   const Icon = item.icon
   return (
-    // Labels are visible from md up, so the tooltip only matters on the icon rail.
-    <Tooltip label={item.label} className="md:hidden">
+    // When labels are visible the tooltip would repeat them, so hide it.
+    <Tooltip label={item.label} className={cn(wide && 'md:hidden')}>
       {/* className must be a string: the tooltip trigger merges it via Radix Slot. */}
       <NavLink
         to={item.to}
-        className="relative flex h-9 items-center justify-center gap-2.5 rounded-md px-2.5 text-fg-muted transition-colors hover:bg-hover/60 hover:text-fg aria-[current=page]:bg-hover aria-[current=page]:text-fg md:justify-start"
+        className={cn(
+          'relative flex h-9 items-center justify-center gap-2.5 rounded-md px-2.5 text-fg-muted transition-colors hover:bg-hover/60 hover:text-fg aria-[current=page]:bg-hover aria-[current=page]:text-fg',
+          wide && 'md:justify-start',
+        )}
       >
         {({ isActive }) => (
           <>
@@ -60,7 +78,7 @@ function SidebarLink({ item }: { item: NavItem }) {
               />
             )}
             <Icon className="size-4 shrink-0" strokeWidth={1.75} />
-            <span className="hidden md:inline">{item.label}</span>
+            {wide && <span className="hidden md:inline">{item.label}</span>}
           </>
         )}
       </NavLink>

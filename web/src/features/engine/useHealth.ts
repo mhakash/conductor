@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 
-import { apiGet } from '@/lib/api'
+import { api } from '@/lib/api'
 
 export type Health = {
   status: 'ok'
@@ -12,7 +12,7 @@ export type Health = {
 export function useHealth() {
   return useQuery({
     queryKey: ['health'],
-    queryFn: ({ signal }) => apiGet<Health>('/health', { signal }),
+    queryFn: ({ signal }) => api.get<Health>('/health', { signal }),
     refetchInterval: 10_000,
     retry: false,
   })

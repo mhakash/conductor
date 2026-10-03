@@ -21,21 +21,24 @@ canvas. Local, single user, no auth.
 ## Commands
 
 ```sh
-make dev        # Go API :7070 + Vite :5180 (proxies /api)
-make test       # go test ./... + tsc
+make dev        # Go API :7070 (data in ./.data) + Vite :5180 (proxies /api)
+make test       # go test ./... + tsc + vitest
 make lint       # go vet + oxlint
 make fmt        # gofmt + prettier
 make build      # ./bin/conductor with UI embedded
 ```
 
-Frontend-only: `cd web && pnpm <dev|build|typecheck|lint|format>`.
+Frontend-only: `cd web && pnpm <dev|build|typecheck|test|lint|format>`.
 
 ## Layout
 
 ```
 cmd/conductor      entrypoint: config, logger, HTTP server, graceful shutdown
 internal/config    flags + CONDUCTOR_* env vars
-internal/server    chi routes, middleware, SPA handler; tests use httptest
+internal/workflow  domain types, Repository interface, structural validation
+internal/block     block descriptors (fields, outputs) and the builtin registry
+internal/store     SQLite (modernc) + goose migrations in store/migrations
+internal/server    chi routes, middleware, SPA handler; tests hit a real temp DB
 internal/version   ldflags-injected build info
 web/embed*.go      `embedui` build tag embeds web/dist; without it UI() is nil
 web/src/
@@ -43,6 +46,10 @@ web/src/
   components/ui    small primitives (Button, Tooltip on Radix)
   components/layout app shell, sidebar, page header
   features/<area>  feature folders: pages, hooks, components for one area
+    workflows/     list page, query hooks + API types (api.ts)
+    blocks/        block descriptors from /api/blocks, icons
+    editor/        canvas editor: Zustand store, graph helpers (tested), ELK
+                   layout, palette, inspector, generated config fields
   lib/             api client, cn()
   styles/index.css Tailwind v4 @theme design tokens
 ```
@@ -53,13 +60,20 @@ web/src/
   `log/slog` for logging.
 - API lives under `/api`, returns JSON; errors are `{"error": "..."}` via
   `writeError`. Unknown `/api/*` routes are JSON 404s, never the SPA.
+  Validation failures are 422 with `problems: [{message, step?, edge?}]`.
+- A workflow's graph is one versioned JSON document (see ADR 0002). New
+  migrations go in `internal/store/migrations` as `NNNNN_name.sql`.
+- Adding a block = a `block.Block` in `internal/block`; the UI renders its
+  config form from the field list, no frontend change needed.
 - Server binds to `127.0.0.1` by default. Steps run on the host (Docker opt-in
   later).
 
 ## Frontend conventions
 
-- React 19 + TS, Tailwind v4, React Router v7, TanStack Query for server state,
-  Zustand for client state, `motion` for animation, `lucide-react` icons.
+- React 19 + TS, Tailwind v4, React Router v8, TanStack Query for server state,
+  Zustand for client state, `motion` for animation, `lucide-react` icons,
+  React Flow (`@xyflow/react`) for the canvas, CodeMirror for code fields.
+- Heavy pages and libraries load lazily (editor route, elkjs).
 - Import via the `@/` alias. Prettier: no semicolons, single quotes, width 100,
   Tailwind class sorting.
 - Colours come only from tokens in `styles/index.css` (`canvas`, `surface`,
@@ -83,3 +97,8 @@ web/src/
 - Prettier's Tailwind plugin needs `tailwindStylesheet` to know custom tokens;
   it's set in `.prettierrc.json`.
 - `go build` without `-tags embedui` serves API only — that's expected in dev.
+- Zustand v5: a selector that builds a new array/object (e.g. `.filter`) must
+  be wrapped in `useShallow`, or the component re-renders forever.
+- React Flow's built-in styles are imported before ours; theme overrides go
+  on `.react-flow.dark` in `styles/index.css`.
+- Block icons are a fixed map in `BlockIcon.tsx`; add new lucide icons there.

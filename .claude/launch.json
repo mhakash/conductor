@@ -1,7 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "api", "runtimeExecutable": "go", "runtimeArgs": ["run", "./cmd/conductor", "--dev"], "port": 7070 },
+    { "name": "api", "runtimeExecutable": "go", "runtimeArgs": ["run", "./cmd/conductor", "--dev", "--data-dir", ".data"], "port": 7070 },
     { "name": "web", "runtimeExecutable": "pnpm", "runtimeArgs": ["--dir", "web", "dev"], "port": 5180 }
   ]
 }

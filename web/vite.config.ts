@@ -9,6 +9,11 @@ export default defineConfig({
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
+  build: {
+    // The largest chunk is elkjs (~1.4 MB), loaded only when auto-layout runs.
+    // The app is served from localhost, so chunk size is not a concern beyond that.
+    chunkSizeWarningLimit: 1500,
+  },
   server: {
     port: 5180,
     strictPort: true,
