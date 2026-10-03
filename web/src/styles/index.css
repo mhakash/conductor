@@ -1,0 +1,55 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+@import '@fontsource/instrument-serif/400-italic.css';
+
+/*
+ * Design tokens. Graphite surfaces, one brass accent for activity.
+ * Status colours are reserved for run state and never used decoratively.
+ */
+@theme {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+  --font-display: 'Instrument Serif', ui-serif, Georgia, serif;
+
+  --color-canvas: #0b0d11;
+  --color-surface: #11141a;
+  --color-raised: #161a21;
+  --color-hover: #1d222b;
+  --color-line: #232831;
+  --color-line-strong: #323944;
+
+  --color-fg: #e7e9ee;
+  --color-fg-muted: #9097a5;
+  --color-fg-subtle: #626a78;
+
+  --color-brass: #d9a441;
+  --color-brass-bright: #e6b65a;
+  --color-brass-dim: #8a6a2e;
+  --color-sage: #63b98a;
+  --color-coral: #e8706a;
+  --color-steel: #6e8bb8;
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-canvas font-sans text-[13px] leading-5 text-fg antialiased;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--color-brass) 35%, transparent);
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brass;
+  }
+}
