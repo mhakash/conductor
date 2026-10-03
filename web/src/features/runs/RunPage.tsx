@@ -20,6 +20,8 @@ import {
   type StepRun,
 } from './api'
 import { LogView } from './LogView'
+import { RunGraph } from './RunGraph'
+import { useRunStream } from './stream'
 import { executionOrder } from './order'
 import { StatusBadge, StatusIcon } from './StatusIcon'
 
@@ -51,9 +53,11 @@ export function RunPage() {
 
 function RunView({ run }: { run: Run }) {
   const active = isActive(run.status)
-  const logs = useRunLogs(run.id, active)
+  const { live } = useRunStream(run.id, active)
+  const logs = useRunLogs(run.id)
   const now = useNow(active)
   const [params, setParams] = useSearchParams()
+  const select = (id: string) => setParams({ step: id }, { replace: true })
 
   const order = useMemo(() => executionOrder(run.definition), [run.definition])
   const stepRuns = useMemo(() => new Map(run.steps.map((s) => [s.stepId, s])), [run.steps])
@@ -62,25 +66,33 @@ function RunView({ run }: { run: Run }) {
     [run.definition.steps],
   )
 
-  // Explicit choice first; otherwise follow what's most interesting right now.
+  // Explicit choice first; otherwise follow what's most interesting right now:
+  // a failure, the step in progress, or — once done — where the run ended.
   const selectedId =
     params.get('step') ??
     run.steps.find((s) => s.status === 'failed')?.stepId ??
-    run.steps.find((s) => s.status === 'running')?.stepId ??
-    order[0]?.id
+    run.steps.findLast((s) => s.status === 'running')?.stepId ??
+    (active ? order[0]?.id : order.at(-1)?.id)
   const selected = selectedId ? stepRuns.get(selectedId) : undefined
 
   const took = elapsed(run.startedAt, run.finishedAt, now)
 
   return (
     <div className="flex h-full flex-col">
-      <RunHeader run={run} took={took} />
+      <RunHeader run={run} took={took} live={live} />
 
       {run.error && (
         <p className="border-b border-line bg-coral/5 px-4 py-2.5 text-coral md:px-6">
           {run.error}
         </p>
       )}
+
+      <section
+        aria-label="Run graph"
+        className="relative h-[40%] min-h-56 shrink-0 border-b border-line"
+      >
+        <RunGraph run={run} selectedId={selectedId} onSelect={select} />
+      </section>
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <nav
@@ -96,7 +108,7 @@ function RunView({ run }: { run: Run }) {
                 <li key={id}>
                   <button
                     aria-current={id === selectedId ? 'true' : undefined}
-                    onClick={() => setParams({ step: id }, { replace: true })}
+                    onClick={() => select(id)}
                     className="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-hover/60 aria-[current=true]:bg-hover"
                   >
                     <StatusIcon status={sr.status} className="mt-0.5" />
@@ -134,7 +146,7 @@ function RunView({ run }: { run: Run }) {
   )
 }
 
-function RunHeader({ run, took }: { run: Run; took: number | null }) {
+function RunHeader({ run, took, live }: { run: Run; took: number | null; live: boolean }) {
   const cancel = useCancelRun()
   const start = useStartRun()
   const navigate = useNavigate()
@@ -157,6 +169,12 @@ function RunHeader({ run, took }: { run: Run; took: number | null }) {
       </Link>
       <h1 className="text-sm font-medium text-fg">{run.workflowName}</h1>
       <StatusBadge status={run.status} />
+      {live && (
+        <span className="flex items-center gap-1.5 text-xs text-brass" title="Updating live">
+          <span className="size-1.5 animate-pulse rounded-full bg-brass motion-reduce:animate-none" />
+          Live
+        </span>
+      )}
       <span className="text-xs text-fg-subtle">
         Started {timeAgo(run.createdAt)}
         {took !== null && (

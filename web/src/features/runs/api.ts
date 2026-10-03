@@ -1,4 +1,4 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import type { Definition } from '@/features/workflows/api'
 import { api } from '@/lib/api'
@@ -49,39 +49,43 @@ export type LogLine = {
   time: string
 }
 
-// Until runs stream live (phase 3), active runs are polled.
-const POLL_MS = 1000
+// A single run streams live (see stream.ts); lists of runs are polled while
+// any of them is active.
+const LIST_POLL_MS = 2000
 
-const keys = {
+export const runKeys = {
   all: ['runs'] as const,
+  lists: ['runs', 'list'] as const,
   list: (workflowId?: string) => ['runs', 'list', workflowId ?? 'all'] as const,
   one: (id: string) => ['runs', id] as const,
   logs: (id: string) => ['runs', id, 'logs'] as const,
 }
+const keys = runKeys
 
 export function useRuns(workflowId?: string) {
   return useQuery({
     queryKey: keys.list(workflowId),
     queryFn: ({ signal }) =>
       api.get<RunSummary[]>(`/runs${workflowId ? `?workflowId=${workflowId}` : ''}`, { signal }),
-    refetchInterval: (q) => (q.state.data?.some((r) => isActive(r.status)) ? POLL_MS : false),
+    refetchInterval: (q) => (q.state.data?.some((r) => isActive(r.status)) ? LIST_POLL_MS : false),
   })
 }
 
-export function useRun(id: string) {
+/** Loads a run once; useRunStream keeps it current while it is active. */
+export function useRun(id: string | undefined) {
   return useQuery({
-    queryKey: keys.one(id),
+    queryKey: keys.one(id ?? ''),
     queryFn: ({ signal }) => api.get<Run>(`/runs/${id}`, { signal }),
-    refetchInterval: (q) => (q.state.data && isActive(q.state.data.status) ? POLL_MS : false),
+    staleTime: Infinity,
+    enabled: !!id,
   })
 }
 
-export function useRunLogs(id: string, active: boolean) {
+export function useRunLogs(id: string) {
   return useQuery({
     queryKey: keys.logs(id),
     queryFn: ({ signal }) => api.get<LogLine[]>(`/runs/${id}/logs`, { signal }),
-    refetchInterval: active ? POLL_MS : false,
-    placeholderData: keepPreviousData,
+    staleTime: Infinity,
   })
 }
 

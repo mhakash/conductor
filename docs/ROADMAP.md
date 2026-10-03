@@ -24,8 +24,9 @@ Steps without a dependency path between them run in parallel.
       block palette, drag/connect, step config panel, save/load.
 - [x] **2 — Engine v1.** DAG validation and scheduler, parallel execution,
       cancellation, timeouts. `shell` and `http` blocks.
-- [ ] **3 — Live runs.** Run events over SSE, animated edges and step states,
-      log drawer, run history.
+- [x] **3 — Live runs.** Run events over SSE; the run page shows the workflow
+      as a live graph (animated edges and step states) with logs per step;
+      the editor shows each step's status from the latest run.
 - [ ] **4 — Data flow.** Step outputs, expressions, workflow inputs, encrypted
       secrets.
 - [ ] **5 — Control flow.** Conditions/branches, retries, continue-on-error,

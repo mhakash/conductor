@@ -10,7 +10,7 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from '@/components/ui/Menu'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { BlockIcon } from '@/features/blocks/BlockIcon'
 import { useBlockMap, useBlocks, type Block } from '@/features/blocks/api'
-import { useRuns, useStartRun } from '@/features/runs/api'
+import { isActive, useStartRun, type Run } from '@/features/runs/api'
 import { StatusIcon } from '@/features/runs/StatusIcon'
 import { useUpdateWorkflow, useWorkflow, type Workflow } from '@/features/workflows/api'
 import { ApiError } from '@/lib/api'
@@ -22,6 +22,7 @@ import { findFreeSpot, NODE_SIZE, toDefinition } from './graph'
 import { Inspector } from './Inspector'
 import { animatePositions, layoutGraph } from './layout'
 import { Palette } from './Palette'
+import { RunOverlayContext, useLatestRun } from './runOverlay'
 import { useEditor } from './store'
 
 export function EditorPage() {
@@ -65,6 +66,7 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
   const addStep = useEditor((s) => s.addStep)
   const update = useUpdateWorkflow(workflow.id)
   const startRun = useStartRun()
+  const latest = useLatestRun(workflow.id)
   const navigate = useNavigate()
   const { screenToFlowPosition, flowToScreenPosition, setCenter, getZoom, fitView } = useReactFlow()
 
@@ -189,7 +191,7 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
         </Tooltip>
         <NameInput />
         <SaveState dirty={dirty} saving={update.isPending} />
-        <LastRun workflowId={workflow.id} />
+        <LastRun run={latest.run} />
 
         <div className="ml-auto flex items-center gap-1.5">
           <Menu>
@@ -227,7 +229,9 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
 
       <div className="flex min-h-0 flex-1">
         <Palette blocks={blocks} onAdd={addFromPalette} />
-        <Canvas blocks={blockMap} />
+        <RunOverlayContext.Provider value={latest.statuses}>
+          <Canvas blocks={blockMap} />
+        </RunOverlayContext.Provider>
         <Inspector blocks={blockMap} />
       </div>
 
@@ -272,16 +276,15 @@ function SaveState({ dirty, saving }: { dirty: boolean; saving: boolean }) {
 }
 
 /** Link to the workflow's most recent run, so its result is one click away. */
-function LastRun({ workflowId }: { workflowId: string }) {
-  const last = useRuns(workflowId).data?.[0]
-  if (!last) return null
+function LastRun({ run }: { run: Run | undefined }) {
+  if (!run) return null
   return (
     <Link
-      to={`/runs/${last.id}`}
+      to={`/runs/${run.id}`}
       className="hidden items-center gap-1.5 rounded-md px-2 py-1 text-xs text-fg-subtle hover:bg-hover hover:text-fg md:flex"
     >
-      <StatusIcon status={last.status} className="size-3.5" />
-      Last run {timeAgo(last.createdAt)}
+      <StatusIcon status={run.status} className="size-3.5" />
+      {isActive(run.status) ? 'Running now' : `Last run ${timeAgo(run.createdAt)}`}
     </Link>
   )
 }

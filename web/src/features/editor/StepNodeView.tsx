@@ -1,13 +1,14 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { AlertTriangle } from 'lucide-react'
-import { motion } from 'motion/react'
 import { memo } from 'react'
 
-import { BlockIcon } from '@/features/blocks/BlockIcon'
+import { StepCard } from '@/components/flow/StepCard'
 import { missingFields, useBlockMap } from '@/features/blocks/api'
-import { cn } from '@/lib/cn'
+import { statusLabel } from '@/features/runs/api'
+import { StatusIcon } from '@/features/runs/StatusIcon'
 
 import type { StepNode } from './graph'
+import { useStepRunStatus } from './runOverlay'
 import { useEditor } from './store'
 
 const handleClass =
@@ -17,46 +18,50 @@ function StepNodeViewImpl({ id, data, selected }: NodeProps<StepNode>) {
   const block = useBlockMap().get(data.block)
   const hasProblem = useEditor((s) => s.problems.some((p) => p.step === id))
   const missing = block ? missingFields(block, data.config) : []
+  const lastStatus = useStepRunStatus(id)
 
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.94 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ type: 'spring', stiffness: 520, damping: 34 }}
-      className={cn(
-        'w-60 rounded-xl border bg-raised shadow-lg shadow-black/30 transition-[border-color,box-shadow]',
-        selected
-          ? 'border-brass shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-brass)_18%,transparent)]'
-          : hasProblem
-            ? 'border-coral/70'
-            : 'border-line hover:border-line-strong',
-      )}
-    >
+    <>
       <Handle type="target" position={Position.Left} className={handleClass} />
-
-      <div className="flex items-center gap-2 border-b border-line px-3 py-2">
-        <span className="flex size-5 items-center justify-center rounded-md bg-hover text-fg-muted">
-          <BlockIcon name={block?.icon ?? ''} className="size-3" />
-        </span>
-        <span className="truncate font-mono text-[11px] text-fg-subtle">{data.block}</span>
-        <span className="ml-auto truncate font-mono text-[11px] text-fg-subtle">{id}</span>
-      </div>
-
-      <div className="px-3 py-2.5">
-        <p className="truncate font-medium text-fg">{data.name || block?.name || data.block}</p>
-        {hasProblem ? (
-          <p className="mt-0.5 flex items-center gap-1 text-xs text-coral">
-            <AlertTriangle className="size-3" /> Has problems
-          </p>
-        ) : missing.length > 0 ? (
-          <p className="mt-0.5 text-xs text-fg-subtle">
-            Needs {missing.map((f) => sentenceCase(f.label)).join(', ')}
-          </p>
-        ) : null}
-      </div>
-
+      <StepCard
+        icon={block?.icon ?? ''}
+        block={data.block}
+        id={id}
+        name={data.name || block?.name || data.block}
+        tone={
+          selected
+            ? 'selected'
+            : hasProblem
+              ? 'danger'
+              : lastStatus === 'running'
+                ? 'active'
+                : 'default'
+        }
+        badge={
+          lastStatus && (
+            <span
+              className="flex items-center gap-1.5"
+              title={`Last run: ${statusLabel(lastStatus)}`}
+            >
+              {id}
+              <StatusIcon status={lastStatus} className="size-3" />
+            </span>
+          )
+        }
+        footer={
+          hasProblem ? (
+            <span className="flex items-center gap-1 text-coral">
+              <AlertTriangle className="size-3" /> Has problems
+            </span>
+          ) : missing.length > 0 ? (
+            <span className="text-fg-subtle">
+              Needs {missing.map((f) => sentenceCase(f.label)).join(', ')}
+            </span>
+          ) : null
+        }
+      />
       <Handle type="source" position={Position.Right} className={handleClass} />
-    </motion.div>
+    </>
   )
 }
 
