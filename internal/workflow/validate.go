@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Problem is one validation failure. Step or Edge points at the offending
@@ -63,6 +64,11 @@ func Validate(w Workflow, blockExists func(string) bool) error {
 
 		if !blockExists(s.Block) {
 			add(Problem{Step: s.ID, Message: fmt.Sprintf("step %q uses unknown block %q", s.ID, s.Block)})
+		}
+		if s.Timeout != "" {
+			if d, err := time.ParseDuration(s.Timeout); err != nil || d <= 0 {
+				add(Problem{Step: s.ID, Message: fmt.Sprintf("step %q has an invalid timeout %q; use a duration like 30s, 5m or 1h", s.ID, s.Timeout)})
+			}
 		}
 	}
 

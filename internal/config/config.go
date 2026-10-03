@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 type Config struct {
@@ -15,6 +16,8 @@ type Config struct {
 	DataDir string
 	// Dev disables serving the embedded UI; Vite serves it instead.
 	Dev bool
+	// MaxParallel caps how many steps of one run execute at once.
+	MaxParallel int
 }
 
 // Load parses args (without the program name). Environment variables provide
@@ -30,6 +33,8 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&cfg.Addr, "addr", envOr("CONDUCTOR_ADDR", "127.0.0.1:7070"), "HTTP listen address")
 	fs.StringVar(&cfg.DataDir, "data-dir", envOr("CONDUCTOR_DATA_DIR", defaultDataDir), "directory for the database and run artifacts")
 	fs.BoolVar(&cfg.Dev, "dev", os.Getenv("CONDUCTOR_DEV") == "1", "development mode (UI served by Vite)")
+	maxParallel, _ := strconv.Atoi(envOr("CONDUCTOR_MAX_PARALLEL", "8"))
+	fs.IntVar(&cfg.MaxParallel, "max-parallel", maxParallel, "maximum steps of one run executing at once")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}

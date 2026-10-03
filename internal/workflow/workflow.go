@@ -37,6 +37,8 @@ type Step struct {
 	Name     string          `json:"name"`
 	Config   json.RawMessage `json:"config"`
 	Position Position        `json:"position"`
+	// Timeout is a Go duration ("30s", "10m"). Empty means the engine default.
+	Timeout string `json:"timeout,omitempty"`
 }
 
 type Position struct {

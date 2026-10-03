@@ -71,6 +71,15 @@ func TestValidate(t *testing.T) {
 			wantErr: "is duplicated",
 		},
 		{
+			name: "bad timeout",
+			w: func() Workflow {
+				w := wf([]string{"tag"})
+				w.Definition.Steps[0].Timeout = "soon"
+				return w
+			}(),
+			wantErr: `invalid timeout "soon"`,
+		},
+		{
 			name:    "cycle",
 			w:       wf([]string{"a", "b", "c"}, Edge{"a", "b"}, Edge{"b", "c"}, Edge{"c", "a"}),
 			wantErr: "steps form a cycle: a → b → c → a",

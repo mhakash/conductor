@@ -22,8 +22,9 @@ var Shell = Block{
 			Help:        "Defaults to your home directory.",
 		},
 		{
-			Key: "shell", Label: "Shell", Type: FieldSelect, Default: "bash",
-			Options: []Option{{"bash", "bash"}, {"zsh", "zsh"}, {"sh", "sh"}},
+			Key: "shell", Label: "Shell", Type: FieldSelect,
+			Options: []Option{{"", "Login shell ($SHELL)"}, {"bash", "bash"}, {"zsh", "zsh"}, {"sh", "sh"}},
+			Help:    "Runs as a login shell, so PATH matches your terminal.",
 		},
 		{Key: "env", Label: "Environment variables", Type: FieldKeyValue},
 	},
@@ -32,6 +33,7 @@ var Shell = Block{
 		{Key: "stderr", Description: "Standard error, trimmed"},
 		{Key: "exitCode", Description: "Process exit code"},
 	},
+	Run: runShell,
 }
 
 var HTTP = Block{
@@ -61,4 +63,5 @@ var HTTP = Block{
 		{Key: "body", Description: "Response body as text"},
 		{Key: "json", Description: "Response body parsed as JSON, when it is JSON"},
 	},
+	Run: runHTTP,
 }

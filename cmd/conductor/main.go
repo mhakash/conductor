@@ -14,6 +14,7 @@ import (
 
 	"conductor/internal/block"
 	"conductor/internal/config"
+	"conductor/internal/engine"
 	"conductor/internal/server"
 	"conductor/internal/store"
 	"conductor/internal/version"
@@ -48,6 +49,16 @@ func run() error {
 	}
 	defer db.Close()
 
+	runs := store.NewRuns(db)
+	if n, err := runs.FailUnfinished(ctx, "Conductor stopped while this run was in progress", time.Now().UTC()); err != nil {
+		return err
+	} else if n > 0 {
+		log.Warn("marked interrupted runs as failed", "count", n)
+	}
+
+	blocks := block.Builtin()
+	eng := engine.New(engine.Options{Runs: runs, Blocks: blocks, Log: log, MaxParallel: cfg.MaxParallel})
+
 	ui := web.UI()
 	if cfg.Dev {
 		ui = nil
@@ -58,7 +69,9 @@ func run() error {
 		Handler: server.New(server.Deps{
 			Log:       log,
 			Workflows: store.NewWorkflows(db),
-			Blocks:    block.Builtin(),
+			Runs:      runs,
+			Engine:    eng,
+			Blocks:    blocks,
 			UI:        ui,
 		}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -86,5 +99,10 @@ func run() error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return httpServer.Shutdown(shutdownCtx)
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Error("http shutdown", "err", err)
+	}
+	// Cancel in-flight runs and let them record their final state before the
+	// database closes.
+	return eng.Shutdown(shutdownCtx)
 }

@@ -2,7 +2,14 @@
 // they are called, what they need to be configured, and what they produce.
 package block
 
-import "slices"
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"slices"
+	"strings"
+)
 
 // FieldType tells the editor which input to render.
 type FieldType string
@@ -39,6 +46,20 @@ type Output struct {
 	Description string `json:"description"`
 }
 
+// Env is what a running step can use besides its config.
+type Env struct {
+	// Stdout and Stderr receive the step's output, line by line, into the run log.
+	Stdout io.Writer
+	Stderr io.Writer
+	// Logf writes Conductor's own commentary ("GET https://… → 200").
+	Logf func(format string, args ...any)
+}
+
+// RunFunc executes a step. It returns the step's outputs, which may be
+// partially filled even when err is non-nil (e.g. a command's exit code).
+// Implementations must stop promptly when ctx is cancelled.
+type RunFunc func(ctx context.Context, config json.RawMessage, env Env) (map[string]any, error)
+
 type Block struct {
 	Type        string `json:"type"`
 	Name        string `json:"name"`
@@ -48,6 +69,39 @@ type Block struct {
 	Icon    string   `json:"icon"`
 	Fields  []Field  `json:"fields"`
 	Outputs []Output `json:"outputs"`
+
+	Run RunFunc `json:"-"`
+}
+
+// Missing returns the labels of required fields that have no value in config.
+func (b Block) Missing(config json.RawMessage) ([]string, error) {
+	var values map[string]any
+	if len(config) > 0 {
+		if err := json.Unmarshal(config, &values); err != nil {
+			return nil, fmt.Errorf("config is not a JSON object: %w", err)
+		}
+	}
+	var missing []string
+	for _, f := range b.Fields {
+		if f.Required && isEmpty(values[f.Key]) {
+			missing = append(missing, f.Label)
+		}
+	}
+	return missing, nil
+}
+
+func isEmpty(v any) bool {
+	switch v := v.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(v) == ""
+	case map[string]any:
+		return len(v) == 0
+	case []any:
+		return len(v) == 0
+	}
+	return false
 }
 
 // Registry holds the available blocks in display order.

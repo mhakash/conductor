@@ -12,6 +12,7 @@ import (
 	"testing/fstest"
 
 	"conductor/internal/block"
+	"conductor/internal/engine"
 	"conductor/internal/store"
 )
 
@@ -28,10 +29,17 @@ func newTestServer(t *testing.T) *httptest.Server {
 	}
 	t.Cleanup(func() { db.Close() })
 
+	runs := store.NewRuns(db)
+	blocks := block.Builtin()
+	eng := engine.New(engine.Options{Runs: runs, Blocks: blocks, Log: log})
+	t.Cleanup(func() { _ = eng.Shutdown(context.Background()) })
+
 	srv := httptest.NewServer(New(Deps{
 		Log:       log,
 		Workflows: store.NewWorkflows(db),
-		Blocks:    block.Builtin(),
+		Runs:      runs,
+		Engine:    eng,
+		Blocks:    blocks,
 		UI:        ui,
 	}).Handler())
 	t.Cleanup(srv.Close)
