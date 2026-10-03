@@ -36,7 +36,9 @@ Frontend-only: `cd web && pnpm <dev|build|typecheck|test|lint|format>`.
 cmd/conductor      entrypoint: config, logger, HTTP server, graceful shutdown
 internal/config    flags + CONDUCTOR_* env vars
 internal/workflow  domain types, Repository interface, structural validation
-internal/block     block descriptors (fields, outputs) and the builtin registry
+internal/block     block descriptors (fields, outputs) + executors (RunFunc); builtin registry
+internal/run       run/step/log types and the run Repository interface
+internal/engine    DAG scheduler: parallel steps, cancel, timeouts, batched logs
 internal/store     SQLite (modernc) + goose migrations in store/migrations
 internal/server    chi routes, middleware, SPA handler; tests hit a real temp DB
 internal/version   ldflags-injected build info
@@ -50,6 +52,7 @@ web/src/
     blocks/        block descriptors from /api/blocks, icons
     editor/        canvas editor: Zustand store, graph helpers (tested), ELK
                    layout, palette, inspector, generated config fields
+    runs/          runs list, run detail (steps, logs, outputs), status icons
   lib/             api client, cn()
   styles/index.css Tailwind v4 @theme design tokens
 ```
@@ -63,8 +66,12 @@ web/src/
   Validation failures are 422 with `problems: [{message, step?, edge?}]`.
 - A workflow's graph is one versioned JSON document (see ADR 0002). New
   migrations go in `internal/store/migrations` as `NNNNN_name.sql`.
-- Adding a block = a `block.Block` in `internal/block`; the UI renders its
-  config form from the field list, no frontend change needed.
+- Adding a block = a `block.Block` (fields, outputs, `Run`) in
+  `internal/block`; the UI renders its config form from the field list, no
+  frontend change needed. `Run` must honour ctx cancellation.
+- Execution semantics (skip downstream on failure, timeouts, login shell,
+  process groups) are in ADR 0003; keep them in sync when changing the engine.
+- Engine and block tests run with `go test -race`; keep them race-clean.
 - Server binds to `127.0.0.1` by default. Steps run on the host (Docker opt-in
   later).
 
@@ -102,3 +109,8 @@ web/src/
 - React Flow's built-in styles are imported before ours; theme overrides go
   on `.react-flow.dark` in `styles/index.css`.
 - Block icons are a fixed map in `BlockIcon.tsx`; add new lucide icons there.
+- TanStack Query pauses `refetchInterval` polling while the tab is hidden, so
+  a hidden browser pane shows stale run state until reloaded or refocused.
+- The editor's unsaved-changes blocker reads `useEditor.getState().dirty` at
+  navigation time; a boolean captured at render would block Run's
+  save-then-navigate.

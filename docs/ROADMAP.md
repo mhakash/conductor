@@ -22,7 +22,7 @@ Steps without a dependency path between them run in parallel.
       tokens, dev/build tooling, single-binary build with the UI embedded.
 - [x] **1 — Workflow editor.** SQLite storage, workflow CRUD, React Flow canvas,
       block palette, drag/connect, step config panel, save/load.
-- [ ] **2 — Engine v1.** DAG validation and scheduler, parallel execution,
+- [x] **2 — Engine v1.** DAG validation and scheduler, parallel execution,
       cancellation, timeouts. `shell` and `http` blocks.
 - [ ] **3 — Live runs.** Run events over SSE, animated edges and step states,
       log drawer, run history.

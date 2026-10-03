@@ -78,3 +78,20 @@ describe('findFreeSpot', () => {
     expect(findFreeSpot(nodes, { x: 0, y: 0 })).toEqual({ x: 0, y: 208 })
   })
 })
+
+describe('timeout', () => {
+  it('round-trips a step timeout and drops blank ones', () => {
+    const { nodes, edges } = toFlow({
+      schemaVersion: 1,
+      steps: [
+        { id: 'a', block: 'shell', name: '', config: {}, position: { x: 0, y: 0 }, timeout: '5m' },
+        { id: 'b', block: 'shell', name: '', config: {}, position: { x: 0, y: 0 } },
+      ],
+      edges: [],
+    })
+    nodes[1].data.timeout = '  '
+    const out = toDefinition(nodes, edges)
+    expect(out.steps[0].timeout).toBe('5m')
+    expect('timeout' in out.steps[1]).toBe(false)
+  })
+})

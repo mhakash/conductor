@@ -1,7 +1,7 @@
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react'
-import { ChevronLeft, Network, Plus } from 'lucide-react'
+import { ChevronLeft, Network, Play, Plus } from 'lucide-react'
 import { useEffect, useEffectEvent } from 'react'
-import { Link, useBlocker, useParams } from 'react-router'
+import { Link, useBlocker, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/Button'
@@ -10,9 +10,12 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from '@/components/ui/Menu'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { BlockIcon } from '@/features/blocks/BlockIcon'
 import { useBlockMap, useBlocks, type Block } from '@/features/blocks/api'
+import { useRuns, useStartRun } from '@/features/runs/api'
+import { StatusIcon } from '@/features/runs/StatusIcon'
 import { useUpdateWorkflow, useWorkflow, type Workflow } from '@/features/workflows/api'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { timeAgo } from '@/lib/time'
 
 import { Canvas } from './Canvas'
 import { findFreeSpot, NODE_SIZE, toDefinition } from './graph'
@@ -61,6 +64,8 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
   const dirty = useEditor((s) => s.dirty)
   const addStep = useEditor((s) => s.addStep)
   const update = useUpdateWorkflow(workflow.id)
+  const startRun = useStartRun()
+  const navigate = useNavigate()
   const { screenToFlowPosition, flowToScreenPosition, setCenter, getZoom, fitView } = useReactFlow()
 
   // Load once per workflow; later refetches must not clobber the draft.
@@ -68,31 +73,52 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
     load(workflow)
   }, [workflow.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const save = () => {
-    const s = useEditor.getState()
-    update.mutate(
-      { name: s.name, description: s.description, definition: toDefinition(s.nodes, s.edges) },
-      {
-        onSuccess: () => {
-          useEditor.getState().markSaved()
-          toast.success('Saved')
-        },
-        onError: (err) => {
-          const problems = err instanceof ApiError ? err.problems : []
-          useEditor.getState().setProblems(problems)
-          toast.error(
-            problems.length
-              ? `Not saved: ${problems.length === 1 ? problems[0].message : `${problems.length} problems — see the highlighted steps`}`
-              : `Not saved: ${err.message}`,
-          )
-        },
-      },
+  const showProblems = (prefix: string, err: Error) => {
+    const problems = err instanceof ApiError ? err.problems : []
+    useEditor.getState().setProblems(problems)
+    toast.error(
+      problems.length
+        ? `${prefix}: ${problems.length === 1 ? problems[0].message : `${problems.length} problems — see the highlighted steps`}`
+        : `${prefix}: ${err.message}`,
     )
   }
+
+  /** Saves the draft; resolves to false (and shows why) when it fails. */
+  const persist = async () => {
+    const s = useEditor.getState()
+    try {
+      await update.mutateAsync({
+        name: s.name,
+        description: s.description,
+        definition: toDefinition(s.nodes, s.edges),
+      })
+      useEditor.getState().markSaved()
+      return true
+    } catch (err) {
+      showProblems('Not saved', err as Error)
+      return false
+    }
+  }
+
+  const save = async () => {
+    if (await persist()) toast.success('Saved')
+  }
+
+  // Runs execute the saved workflow, so unsaved edits are saved first.
+  const runWorkflow = async () => {
+    if (useEditor.getState().dirty && !(await persist())) return
+    try {
+      const run = await startRun.mutateAsync(workflow.id)
+      navigate(`/runs/${run.id}`)
+    } catch (err) {
+      showProblems("Can't run yet", err as Error)
+    }
+  }
+
   const onKey = useEffectEvent((e: KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
       e.preventDefault()
-      save()
+      void save()
     }
   })
   useEffect(() => {
@@ -163,6 +189,7 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
         </Tooltip>
         <NameInput />
         <SaveState dirty={dirty} saving={update.isPending} />
+        <LastRun workflowId={workflow.id} />
 
         <div className="ml-auto flex items-center gap-1.5">
           <Menu>
@@ -187,9 +214,13 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
             <Network className="size-3.5" />
             <span className="hidden sm:inline">Tidy up</span>
           </Button>
-          <Button onClick={save} disabled={update.isPending}>
+          <Button variant="secondary" onClick={save} disabled={update.isPending}>
             Save
-            <kbd className="hidden font-sans text-[11px] opacity-60 sm:inline">⌘S</kbd>
+            <kbd className="hidden font-sans text-[11px] text-fg-subtle sm:inline">⌘S</kbd>
+          </Button>
+          <Button onClick={runWorkflow} disabled={update.isPending || startRun.isPending}>
+            <Play className="size-3" fill="currentColor" />
+            Run
           </Button>
         </div>
       </header>
@@ -240,9 +271,26 @@ function SaveState({ dirty, saving }: { dirty: boolean; saving: boolean }) {
   )
 }
 
+/** Link to the workflow's most recent run, so its result is one click away. */
+function LastRun({ workflowId }: { workflowId: string }) {
+  const last = useRuns(workflowId).data?.[0]
+  if (!last) return null
+  return (
+    <Link
+      to={`/runs/${last.id}`}
+      className="hidden items-center gap-1.5 rounded-md px-2 py-1 text-xs text-fg-subtle hover:bg-hover hover:text-fg md:flex"
+    >
+      <StatusIcon status={last.status} className="size-3.5" />
+      Last run {timeAgo(last.createdAt)}
+    </Link>
+  )
+}
+
 /** Asks before leaving with unsaved changes, both in-app and on tab close. */
 function UnsavedChangesGuard({ dirty }: { dirty: boolean }) {
-  const blocker = useBlocker(dirty)
+  // Read the store at navigation time: "Run" saves and navigates in one go,
+  // before React has re-rendered with dirty = false.
+  const blocker = useBlocker(() => useEditor.getState().dirty)
 
   useEffect(() => {
     if (!dirty) return

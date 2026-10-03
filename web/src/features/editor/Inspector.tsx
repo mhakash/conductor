@@ -94,6 +94,23 @@ function StepInspector({ step, block }: { step: StepNode; block: Block }) {
         </Section>
       )}
 
+      <Section title="Settings">
+        <FormField
+          label="Timeout"
+          htmlFor="step-timeout"
+          help="How long the step may run, e.g. 30s, 10m or 2h. Defaults to 1h."
+        >
+          <Input
+            id="step-timeout"
+            value={step.data.timeout ?? ''}
+            placeholder="1h"
+            className="font-mono text-xs"
+            spellCheck={false}
+            onChange={(e) => updateStep(step.id, { timeout: e.target.value })}
+          />
+        </FormField>
+      </Section>
+
       {block.outputs.length > 0 && (
         <Section title="Outputs">
           <dl className="flex flex-col gap-2.5">

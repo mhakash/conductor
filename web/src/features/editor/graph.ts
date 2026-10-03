@@ -8,6 +8,8 @@ export type StepData = {
   block: string
   name: string
   config: Record<string, unknown>
+  /** Go duration such as "30s" or "10m"; empty means the engine default. */
+  timeout?: string
 }
 
 export type StepNode = Node<StepData, 'step'>
@@ -24,7 +26,7 @@ export function toFlow(def: Definition): { nodes: StepNode[]; edges: FlowEdge[] 
       id: s.id,
       type: 'step',
       position: s.position,
-      data: { block: s.block, name: s.name, config: s.config ?? {} },
+      data: { block: s.block, name: s.name, config: s.config ?? {}, timeout: s.timeout },
     })),
     edges: def.edges.map((e) => ({ id: edgeId(e), source: e.from, target: e.to })),
   }
@@ -37,6 +39,7 @@ export function toDefinition(nodes: StepNode[], edges: FlowEdge[]): Definition {
     name: n.data.name,
     config: n.data.config,
     position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
+    ...(n.data.timeout?.trim() && { timeout: n.data.timeout.trim() }),
   }))
   return {
     schemaVersion: SCHEMA_VERSION,

@@ -10,6 +10,7 @@ export type Step = {
   name: string
   config: Record<string, unknown>
   position: Position
+  timeout?: string
 }
 
 export type Edge = { from: string; to: string }

@@ -32,7 +32,7 @@ type EditorState = {
   edges: Edge[]
   /** True when the draft differs from what was last loaded or saved. */
   dirty: boolean
-  /** Problems from the last failed save, cleared on edit. */
+  /** Problems from the last failed save or run, cleared by the next successful save. */
   problems: Problem[]
 
   load: (wf: Workflow) => void
