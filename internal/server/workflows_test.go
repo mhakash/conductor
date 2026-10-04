@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -172,5 +173,48 @@ func TestRunWorkflow(t *testing.T) {
 
 	if code := do(t, "POST", base+"/runs/"+started.ID+"/cancel", nil, nil); code != http.StatusConflict {
 		t.Errorf("cancel finished run: status %d, want 409", code)
+	}
+}
+
+func TestSecretsAndInputsEndToEnd(t *testing.T) {
+	srv := newTestServer(t)
+	base := srv.URL + "/api"
+
+	if code := do(t, "PUT", base+"/secrets/lower-case", map[string]string{"value": "x"}, nil); code != http.StatusUnprocessableEntity {
+		t.Errorf("bad name: status %d", code)
+	}
+	if code := do(t, "PUT", base+"/secrets/API_TOKEN", map[string]string{"value": "tok-9f8e7d"}, nil); code != http.StatusOK {
+		t.Fatalf("put secret: status %d", code)
+	}
+	var list []map[string]any
+	do(t, "GET", base+"/secrets", nil, &list)
+	if len(list) != 1 || list[0]["name"] != "API_TOKEN" || list[0]["value"] != nil {
+		t.Errorf("list = %v (values must never be returned)", list)
+	}
+
+	def := workflow.EmptyDefinition()
+	def.Inputs = []workflow.Input{{Name: "version", Type: workflow.InputText, Required: true}}
+	def.Steps = []workflow.Step{{ID: "say", Block: "shell", Config: json.RawMessage(
+		`{"command":"echo $TOKEN {{ inputs.version }}","shell":"sh","env":{"TOKEN":"{{ secrets.API_TOKEN }}"}}`)}}
+	var wf workflow.Workflow
+	do(t, "POST", base+"/workflows", map[string]any{"name": "Secret", "definition": def}, &wf)
+
+	var started run.Run
+	if code := do(t, "POST", base+"/workflows/"+wf.ID+"/runs", map[string]any{"inputs": map[string]any{"version": "v2"}}, &started); code != http.StatusCreated {
+		t.Fatalf("start: status %d", code)
+	}
+	var got run.Run
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		do(t, "GET", base+"/runs/"+started.ID, nil, &got)
+		if got.Status.Done() {
+			break
+		}
+	}
+	if got.Status != run.StatusSucceeded {
+		t.Fatalf("run = %s %+v", got.Status, got.Steps)
+	}
+	out := string(got.Steps[0].Outputs) + string(got.Steps[0].Config)
+	if strings.Contains(out, "tok-9f8e7d") || !strings.Contains(string(got.Steps[0].Outputs), "v2") {
+		t.Errorf("outputs/config = %s", out)
 	}
 }

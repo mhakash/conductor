@@ -30,7 +30,8 @@ func TestRunLifecycle(t *testing.T) {
 	def := workflow.EmptyDefinition()
 	def.Steps = []workflow.Step{{ID: "tag", Block: "shell"}, {ID: "push", Block: "shell"}}
 
-	r, err := s.Create(ctx, run.Run{WorkflowID: "wf1", WorkflowName: "Build prep", Definition: def})
+	r, err := s.Create(ctx, run.Run{WorkflowID: "wf1", WorkflowName: "Build prep", Definition: def,
+		Inputs: map[string]any{"version": "v1.4.0"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +41,7 @@ func TestRunLifecycle(t *testing.T) {
 
 	now := time.Now().UTC()
 	must(t, s.StartRun(ctx, r.ID, now))
-	must(t, s.StartStep(ctx, r.ID, "tag", now))
+	must(t, s.StartStep(ctx, r.ID, "tag", json.RawMessage(`{"command":"git tag v1.4.0"}`), now))
 	appended, err := s.AppendLogs(ctx, r.ID, []run.LogLine{
 		{StepID: "tag", Stream: run.StreamStdout, Text: "tagged", Time: now},
 		{StepID: "tag", Stream: run.StreamStderr, Text: "warning", Time: now},
@@ -61,6 +62,9 @@ func TestRunLifecycle(t *testing.T) {
 	}
 	if got.Steps[0].Status != run.StatusSucceeded || string(got.Steps[0].Outputs) != `{"exitCode":0}` {
 		t.Errorf("step = %+v", got.Steps[0])
+	}
+	if got.Inputs["version"] != "v1.4.0" || string(got.Steps[0].Config) != `{"command":"git tag v1.4.0"}` {
+		t.Errorf("inputs/config not stored: %v %s", got.Inputs, got.Steps[0].Config)
 	}
 	if got.Steps[1].Status != run.StatusQueued || got.Steps[1].StartedAt != nil {
 		t.Errorf("untouched step = %+v", got.Steps[1])

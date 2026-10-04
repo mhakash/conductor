@@ -38,6 +38,13 @@ func (s *Runs) Create(ctx context.Context, r run.Run) (run.Run, error) {
 	if err != nil {
 		return run.Run{}, fmt.Errorf("encode definition: %w", err)
 	}
+	if r.Inputs == nil {
+		r.Inputs = map[string]any{}
+	}
+	inputs, err := json.Marshal(r.Inputs)
+	if err != nil {
+		return run.Run{}, fmt.Errorf("encode inputs: %w", err)
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -46,16 +53,17 @@ func (s *Runs) Create(ctx context.Context, r run.Run) (run.Run, error) {
 	defer tx.Rollback()
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO runs (id, workflow_id, workflow_name, definition, status, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		r.ID, r.WorkflowID, r.WorkflowName, string(def), r.Status, formatTime(r.CreatedAt))
+		INSERT INTO runs (id, workflow_id, workflow_name, definition, inputs, status, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.WorkflowID, r.WorkflowName, string(def), string(inputs), r.Status, formatTime(r.CreatedAt))
 	if err != nil {
 		return run.Run{}, fmt.Errorf("insert run: %w", err)
 	}
 
 	r.Steps = make([]run.StepRun, len(r.Definition.Steps))
 	for i, step := range r.Definition.Steps {
-		r.Steps[i] = run.StepRun{StepID: step.ID, Status: run.StatusQueued, Outputs: json.RawMessage("{}")}
+		r.Steps[i] = run.StepRun{StepID: step.ID, Status: run.StatusQueued,
+			Outputs: json.RawMessage("{}"), Config: json.RawMessage("{}")}
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO step_runs (run_id, step_id, position, status) VALUES (?, ?, ?, ?)`,
 			r.ID, step.ID, i, run.StatusQueued)
@@ -68,12 +76,12 @@ func (s *Runs) Create(ctx context.Context, r run.Run) (run.Run, error) {
 
 func (s *Runs) Get(ctx context.Context, id string) (run.Run, error) {
 	var r run.Run
-	var def, created string
+	var def, inputs, created string
 	var started, finished sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, workflow_id, workflow_name, definition, status, error, created_at, started_at, finished_at
+		SELECT id, workflow_id, workflow_name, definition, inputs, status, error, created_at, started_at, finished_at
 		FROM runs WHERE id = ?`, id,
-	).Scan(&r.ID, &r.WorkflowID, &r.WorkflowName, &def, &r.Status, &r.Error, &created, &started, &finished)
+	).Scan(&r.ID, &r.WorkflowID, &r.WorkflowName, &def, &inputs, &r.Status, &r.Error, &created, &started, &finished)
 	if errors.Is(err, sql.ErrNoRows) {
 		return run.Run{}, run.ErrNotFound
 	}
@@ -82,6 +90,9 @@ func (s *Runs) Get(ctx context.Context, id string) (run.Run, error) {
 	}
 	if err := json.Unmarshal([]byte(def), &r.Definition); err != nil {
 		return run.Run{}, fmt.Errorf("decode run definition: %w", err)
+	}
+	if err := json.Unmarshal([]byte(inputs), &r.Inputs); err != nil {
+		return run.Run{}, fmt.Errorf("decode run inputs: %w", err)
 	}
 	if r.CreatedAt, err = parseTime(created); err != nil {
 		return run.Run{}, err
@@ -94,7 +105,7 @@ func (s *Runs) Get(ctx context.Context, id string) (run.Run, error) {
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT step_id, status, error, outputs, started_at, finished_at
+		SELECT step_id, status, error, outputs, config, started_at, finished_at
 		FROM step_runs WHERE run_id = ? ORDER BY position`, id)
 	if err != nil {
 		return run.Run{}, fmt.Errorf("get step runs: %w", err)
@@ -103,12 +114,13 @@ func (s *Runs) Get(ctx context.Context, id string) (run.Run, error) {
 	r.Steps = []run.StepRun{}
 	for rows.Next() {
 		var st run.StepRun
-		var outputs string
+		var outputs, config string
 		var started, finished sql.NullString
-		if err := rows.Scan(&st.StepID, &st.Status, &st.Error, &outputs, &started, &finished); err != nil {
+		if err := rows.Scan(&st.StepID, &st.Status, &st.Error, &outputs, &config, &started, &finished); err != nil {
 			return run.Run{}, fmt.Errorf("scan step run: %w", err)
 		}
 		st.Outputs = json.RawMessage(outputs)
+		st.Config = json.RawMessage(config)
 		if st.StartedAt, err = parseNullTime(started); err != nil {
 			return run.Run{}, err
 		}
@@ -176,9 +188,13 @@ func (s *Runs) FinishRun(ctx context.Context, id string, status run.Status, errM
 		status, errMsg, formatTime(at), id)
 }
 
-func (s *Runs) StartStep(ctx context.Context, runID, stepID string, at time.Time) error {
-	return s.exec(ctx, `UPDATE step_runs SET status = ?, started_at = ? WHERE run_id = ? AND step_id = ?`,
-		run.StatusRunning, formatTime(at), runID, stepID)
+func (s *Runs) StartStep(ctx context.Context, runID, stepID string, config json.RawMessage, at time.Time) error {
+	if len(config) == 0 {
+		config = json.RawMessage("{}")
+	}
+	return s.exec(ctx, `
+		UPDATE step_runs SET status = ?, config = ?, started_at = ? WHERE run_id = ? AND step_id = ?`,
+		run.StatusRunning, string(config), formatTime(at), runID, stepID)
 }
 
 func (s *Runs) FinishStep(ctx context.Context, runID, stepID string, status run.Status, outputs json.RawMessage, errMsg string, at time.Time) error {

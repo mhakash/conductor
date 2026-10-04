@@ -17,7 +17,13 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		s.repoError(w, r, err)
 		return
 	}
-	started, err := s.engine.Start(r.Context(), wf)
+	var body struct {
+		Inputs map[string]any `json:"inputs"`
+	}
+	if r.ContentLength != 0 && !decodeJSON(w, r, &body) {
+		return
+	}
+	started, err := s.engine.Start(r.Context(), wf, body.Inputs)
 	if err != nil {
 		s.repoError(w, r, err)
 		return

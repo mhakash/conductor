@@ -14,6 +14,7 @@ import (
 	"conductor/internal/block"
 	"conductor/internal/engine"
 	"conductor/internal/events"
+	"conductor/internal/secrets"
 	"conductor/internal/store"
 )
 
@@ -33,7 +34,12 @@ func newTestServer(t *testing.T) *httptest.Server {
 	runs := store.NewRuns(db)
 	blocks := block.Builtin()
 	broker := events.NewBroker()
-	eng := engine.New(engine.Options{Runs: runs, Blocks: blocks, Events: broker, Log: log})
+	cipher, err := secrets.NewCipher(make([]byte, secrets.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretStore := secrets.NewStore(db, cipher)
+	eng := engine.New(engine.Options{Runs: runs, Blocks: blocks, Events: broker, Secrets: secretStore, Log: log})
 	t.Cleanup(func() { _ = eng.Shutdown(context.Background()) })
 
 	srv := httptest.NewServer(New(Deps{
@@ -42,6 +48,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 		Runs:      runs,
 		Engine:    eng,
 		Broker:    broker,
+		Secrets:   secretStore,
 		Blocks:    blocks,
 		UI:        ui,
 	}).Handler())

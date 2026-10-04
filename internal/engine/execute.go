@@ -9,6 +9,8 @@ import (
 
 	"conductor/internal/block"
 	"conductor/internal/run"
+	"conductor/internal/secrets"
+	"conductor/internal/tmpl"
 	"conductor/internal/workflow"
 )
 
@@ -17,13 +19,14 @@ type stepResult struct {
 	status    run.Status
 	outputs   map[string]any
 	err       string
+	config    json.RawMessage // resolved and masked, as recorded
 	startedAt *time.Time
 }
 
 // execute runs r to completion. Steps start as soon as all their
 // dependencies have succeeded, at most maxParallel at a time. When a step
 // fails, everything downstream of it is skipped; independent branches carry on.
-func (e *Engine) execute(ctx context.Context, r run.Run) {
+func (e *Engine) execute(ctx context.Context, r run.Run, secretValues map[string]string) {
 	// Bookkeeping writes must succeed even after ctx is cancelled.
 	store := context.WithoutCancel(ctx)
 	log := e.log.With("run", r.ID)
@@ -37,7 +40,31 @@ func (e *Engine) execute(ctx context.Context, r run.Run) {
 	e.events.Publish(r.ID, run.Event{Type: run.EventRun, State: &run.State{Status: run.StatusRunning, StartedAt: &started}})
 	log.Info("run started", "workflow", r.WorkflowName, "steps", len(r.Definition.Steps))
 
-	sink := newLogSink(store, e.runs, e.events, r.ID, log)
+	secretEnv := make(map[string]any, len(secretValues))
+	masked := make([]string, 0, len(secretValues))
+	for name, v := range secretValues {
+		secretEnv[name] = v
+		masked = append(masked, v)
+	}
+	masker := secrets.NewMasker(masked)
+	sink := newLogSink(store, e.runs, e.events, r.ID, masker, log)
+
+	// Outputs of succeeded steps, unmasked, for downstream expressions. Only
+	// this goroutine touches it.
+	outputs := map[string]map[string]any{}
+	exprEnv := func() map[string]any {
+		steps := make(map[string]any, len(outputs))
+		for id, o := range outputs {
+			steps[id] = map[string]any{"outputs": o}
+		}
+		return map[string]any{
+			"steps":    steps,
+			"inputs":   r.Inputs,
+			"secrets":  secretEnv,
+			"run":      map[string]any{"id": r.ID},
+			"workflow": map[string]any{"id": r.WorkflowID, "name": r.WorkflowName},
+		}
+	}
 
 	steps := make(map[string]workflow.Step, len(r.Definition.Steps))
 	waitingOn := make(map[string]int, len(r.Definition.Steps))
@@ -57,6 +84,9 @@ func (e *Engine) execute(ctx context.Context, r run.Run) {
 	pending := len(steps)
 
 	launch := func(s workflow.Step) {
+		// Built here, not in the goroutine: every ancestor has finished, and
+		// outputs must not be read concurrently with the loop below.
+		env := exprEnv()
 		go func() {
 			select {
 			case slots <- struct{}{}:
@@ -65,22 +95,20 @@ func (e *Engine) execute(ctx context.Context, r run.Run) {
 				results <- stepResult{id: s.ID, status: run.StatusCancelled, err: cancelReason(ctx)}
 				return
 			}
-			results <- e.runStep(ctx, store, r.ID, s, sink)
+			results <- e.runStep(ctx, store, r.ID, s, sink, env, masker)
 		}()
 	}
 
 	finishStep := func(res stepResult) {
-		outputs, err := json.Marshal(res.outputs)
-		if err != nil || res.outputs == nil {
-			outputs = json.RawMessage("{}")
-		}
+		recorded := maskJSON(masker, res.outputs)
+		errMsg := masker.Mask(res.err)
 		at := e.now()
-		if err := e.runs.FinishStep(store, r.ID, res.id, res.status, outputs, res.err, at); err != nil {
+		if err := e.runs.FinishStep(store, r.ID, res.id, res.status, recorded, errMsg, at); err != nil {
 			log.Error("finish step", "step", res.id, "err", err)
 		}
 		e.events.Publish(r.ID, run.Event{Type: run.EventStep, Step: &run.StepRun{
-			StepID: res.id, Status: res.status, Error: res.err, Outputs: outputs,
-			StartedAt: res.startedAt, FinishedAt: &at,
+			StepID: res.id, Status: res.status, Error: errMsg, Outputs: recorded,
+			Config: res.config, StartedAt: res.startedAt, FinishedAt: &at,
 		}})
 	}
 
@@ -113,6 +141,10 @@ func (e *Engine) execute(ctx context.Context, r run.Run) {
 
 		switch res.status {
 		case run.StatusSucceeded:
+			if res.outputs == nil {
+				res.outputs = map[string]any{}
+			}
+			outputs[res.id] = res.outputs
 			for _, next := range dependents[res.id] {
 				waitingOn[next]--
 				if waitingOn[next] == 0 && !finished[next] {
@@ -147,7 +179,7 @@ func (e *Engine) execute(ctx context.Context, r run.Run) {
 	log.Info("run finished", "status", status)
 }
 
-func (e *Engine) runStep(ctx, store context.Context, runID string, s workflow.Step, sink *logSink) stepResult {
+func (e *Engine) runStep(ctx, store context.Context, runID string, s workflow.Step, sink *logSink, exprEnv map[string]any, masker *secrets.Masker) stepResult {
 	b, _ := e.blocks.Get(s.Block)
 	timeout := DefaultStepTimeout
 	if s.Timeout != "" {
@@ -157,19 +189,32 @@ func (e *Engine) runStep(ctx, store context.Context, runID string, s workflow.St
 	stepCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	config, renderErr := tmpl.RenderConfig(s.Config, exprEnv)
+	if renderErr != nil {
+		config = s.Config // record what we have; the step fails below
+	}
+	recorded := maskJSON(masker, config)
+
 	startedAt := e.now()
-	if err := e.runs.StartStep(store, runID, s.ID, startedAt); err != nil {
+	if err := e.runs.StartStep(store, runID, s.ID, recorded, startedAt); err != nil {
 		e.log.Error("start step", "run", runID, "step", s.ID, "err", err)
 	}
 	e.events.Publish(runID, run.Event{Type: run.EventStep, Step: &run.StepRun{
-		StepID: s.ID, Status: run.StatusRunning, Outputs: json.RawMessage("{}"), StartedAt: &startedAt,
+		StepID: s.ID, Status: run.StatusRunning, Outputs: json.RawMessage("{}"),
+		Config: recorded, StartedAt: &startedAt,
 	}})
 
 	env, flush := sink.envFor(s.ID)
-	outputs, err := safeRun(stepCtx, b.Run, s.Config, env)
+	if renderErr != nil {
+		msg := "config: " + renderErr.Error()
+		env.Logf("%s", msg)
+		flush()
+		return stepResult{id: s.ID, status: run.StatusFailed, err: msg, config: recorded, startedAt: &startedAt}
+	}
+	outputs, err := safeRun(stepCtx, b.Run, config, env)
 	flush()
 
-	res := stepResult{id: s.ID, status: run.StatusSucceeded, outputs: outputs, startedAt: &startedAt}
+	res := stepResult{id: s.ID, status: run.StatusSucceeded, outputs: outputs, config: recorded, startedAt: &startedAt}
 	switch {
 	case err == nil:
 	case ctx.Err() != nil:
@@ -207,4 +252,28 @@ func cancelReason(ctx context.Context) string {
 		return ""
 	}
 	return cause.Error()
+}
+
+// maskJSON encodes v and masks secrets in it. Masking replaces text inside
+// JSON strings; if a secret ever matched JSON syntax itself, the result
+// would be invalid, so it is replaced wholesale rather than stored broken.
+func maskJSON(m *secrets.Masker, v any) json.RawMessage {
+	var data []byte
+	switch v := v.(type) {
+	case json.RawMessage:
+		data = v
+	default:
+		var err error
+		if data, err = json.Marshal(v); err != nil {
+			return json.RawMessage("{}")
+		}
+	}
+	if len(data) == 0 || string(data) == "null" {
+		return json.RawMessage("{}")
+	}
+	out := m.Mask(string(data))
+	if !json.Valid([]byte(out)) {
+		return json.RawMessage(`{"_hidden":"contains a secret"}`)
+	}
+	return json.RawMessage(out)
 }

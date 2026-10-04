@@ -13,6 +13,8 @@ import (
 
 	"conductor/internal/block"
 	"conductor/internal/run"
+	"conductor/internal/secrets"
+	"conductor/internal/tmpl"
 	"conductor/internal/workflow"
 )
 
@@ -33,6 +35,8 @@ type Options struct {
 	Log    *slog.Logger
 	// Events receives live progress; nil discards it.
 	Events run.Publisher
+	// Secrets provides values for {{ secrets.NAME }}; nil means no secrets.
+	Secrets SecretSource
 	// MaxParallel caps how many steps of one run execute at the same time.
 	MaxParallel int
 }
@@ -40,6 +44,7 @@ type Options struct {
 type Engine struct {
 	runs        run.Repository
 	events      run.Publisher
+	secrets     SecretSource
 	blocks      *block.Registry
 	log         *slog.Logger
 	maxParallel int
@@ -61,6 +66,7 @@ func New(o Options) *Engine {
 	return &Engine{
 		runs:        o.Runs,
 		events:      o.Events,
+		secrets:     o.Secrets,
 		blocks:      o.Blocks,
 		log:         o.Log,
 		maxParallel: o.MaxParallel,
@@ -69,10 +75,25 @@ func New(o Options) *Engine {
 	}
 }
 
-// Start validates wf, records a new run and executes it in the background.
-// It returns a *workflow.ValidationError if the workflow can't run as is.
-func (e *Engine) Start(ctx context.Context, wf workflow.Workflow) (run.Run, error) {
+// SecretSource decrypts secrets by name; a missing name is a
+// *secrets.MissingError.
+type SecretSource interface {
+	Values(ctx context.Context, names []string) (map[string]string, error)
+}
+
+// Start validates wf and inputs, records a new run and executes it in the
+// background. It returns a *workflow.ValidationError if the workflow can't
+// run as is.
+func (e *Engine) Start(ctx context.Context, wf workflow.Workflow, inputs map[string]any) (run.Run, error) {
 	if err := e.Check(wf); err != nil {
+		return run.Run{}, err
+	}
+	resolved, err := workflow.ResolveInputs(wf.Definition.Inputs, inputs)
+	if err != nil {
+		return run.Run{}, err
+	}
+	secretValues, err := e.loadSecrets(ctx, wf.Definition)
+	if err != nil {
 		return run.Run{}, err
 	}
 
@@ -86,6 +107,7 @@ func (e *Engine) Start(ctx context.Context, wf workflow.Workflow) (run.Run, erro
 		WorkflowID:   wf.ID,
 		WorkflowName: wf.Name,
 		Definition:   wf.Definition,
+		Inputs:       resolved,
 	})
 	if err != nil {
 		return run.Run{}, err
@@ -103,9 +125,49 @@ func (e *Engine) Start(ctx context.Context, wf workflow.Workflow) (run.Run, erro
 			e.mu.Unlock()
 			cancel(nil)
 		}()
-		e.execute(runCtx, r)
+		e.execute(runCtx, r, secretValues)
 	}()
 	return r, nil
+}
+
+// loadSecrets decrypts every secret the workflow's expressions reference.
+// Missing ones are reported against the steps that use them.
+func (e *Engine) loadSecrets(ctx context.Context, def workflow.Definition) (map[string]string, error) {
+	users := map[string][]string{} // secret name → step ids
+	var names []string
+	for _, s := range def.Steps {
+		refs, _ := tmpl.ConfigRefs(s.Config) // compiled successfully during Check
+		for _, r := range refs {
+			if r.Kind == "secrets" {
+				if users[r.Name] == nil {
+					names = append(names, r.Name)
+				}
+				users[r.Name] = append(users[r.Name], s.ID)
+			}
+		}
+	}
+	if len(names) == 0 {
+		return map[string]string{}, nil
+	}
+	if e.secrets == nil {
+		return nil, errors.New("secrets are not available")
+	}
+
+	values, err := e.secrets.Values(ctx, names)
+	var missing *secrets.MissingError
+	if errors.As(err, &missing) {
+		var problems []workflow.Problem
+		for _, name := range missing.Names {
+			for _, step := range users[name] {
+				problems = append(problems, workflow.Problem{
+					Step:    step,
+					Message: fmt.Sprintf("step %q uses secret %s, which doesn't exist; add it under Secrets", step, name),
+				})
+			}
+		}
+		return nil, &workflow.ValidationError{Problems: problems}
+	}
+	return values, err
 }
 
 // Cancel stops a running run. Running steps are interrupted; steps that

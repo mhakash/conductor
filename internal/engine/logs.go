@@ -10,6 +10,7 @@ import (
 
 	"conductor/internal/block"
 	"conductor/internal/run"
+	"conductor/internal/secrets"
 )
 
 const (
@@ -24,6 +25,7 @@ type logSink struct {
 	ctx    context.Context
 	runs   run.Repository
 	events run.Publisher
+	masker *secrets.Masker
 	runID  string
 	log    *slog.Logger
 
@@ -34,11 +36,12 @@ type logSink struct {
 	done chan struct{}
 }
 
-func newLogSink(ctx context.Context, runs run.Repository, events run.Publisher, runID string, log *slog.Logger) *logSink {
+func newLogSink(ctx context.Context, runs run.Repository, events run.Publisher, runID string, masker *secrets.Masker, log *slog.Logger) *logSink {
 	s := &logSink{
 		ctx:    ctx,
 		runs:   runs,
 		events: events,
+		masker: masker,
 		runID:  runID,
 		log:    log,
 		stop:   make(chan struct{}),
@@ -64,6 +67,7 @@ func (s *logSink) loop() {
 }
 
 func (s *logSink) add(stepID string, stream run.Stream, text string) {
+	text = s.masker.Mask(text)
 	if len(text) > maxLineLength {
 		text = text[:maxLineLength] + " … (line truncated)"
 	}

@@ -15,6 +15,7 @@ import (
 
 	"conductor/internal/block"
 	"conductor/internal/run"
+	"conductor/internal/secrets"
 	"conductor/internal/store"
 	"conductor/internal/workflow"
 )
@@ -61,7 +62,14 @@ func testBlocks(c *concurrency) *block.Registry {
 		Fields: []block.Field{{Key: "url", Label: "URL", Required: true}},
 		Run:    echo.Run,
 	}
-	return block.NewRegistry(sleep, fail, panicky, echo, needs)
+	// emit returns its config's "value" as an output and logs it.
+	emit := block.Block{Type: "emit", Run: func(_ context.Context, cfg json.RawMessage, env block.Env) (map[string]any, error) {
+		var v struct{ Value string }
+		_ = json.Unmarshal(cfg, &v)
+		fmt.Fprintln(env.Stdout, v.Value)
+		return map[string]any{"value": v.Value}, nil
+	}}
+	return block.NewRegistry(sleep, fail, panicky, echo, needs, emit)
 }
 
 type fixture struct {
@@ -79,7 +87,8 @@ func newFixture(t *testing.T, maxParallel int) fixture {
 	}
 	runs := store.NewRuns(db)
 	conc := &concurrency{}
-	e := New(Options{Runs: runs, Blocks: testBlocks(conc), Log: log, MaxParallel: maxParallel})
+	e := New(Options{Runs: runs, Blocks: testBlocks(conc), Log: log, MaxParallel: maxParallel,
+		Secrets: fakeSecrets{"TOKEN": "s3cr3t-token"}})
 	t.Cleanup(func() {
 		_ = e.Shutdown(context.Background())
 		db.Close()
@@ -110,7 +119,7 @@ func build(steps []stepSpec, edges ...string) workflow.Workflow {
 func (f fixture) runToEnd(t *testing.T, wf workflow.Workflow) (run.Run, time.Duration) {
 	t.Helper()
 	start := time.Now()
-	r, err := f.engine.Start(context.Background(), wf)
+	r, err := f.engine.Start(context.Background(), wf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +242,7 @@ func TestCancel(t *testing.T) {
 		{id: "after", block: "sleep"},
 	}, "slow>after")
 
-	r, err := f.engine.Start(context.Background(), wf)
+	r, err := f.engine.Start(context.Background(), wf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,13 +303,13 @@ func TestLogs(t *testing.T) {
 
 func TestCheckReportsMissingConfig(t *testing.T) {
 	f := newFixture(t, 8)
-	_, err := f.engine.Start(context.Background(), build([]stepSpec{{id: "call", block: "needs"}}))
+	_, err := f.engine.Start(context.Background(), build([]stepSpec{{id: "call", block: "needs"}}), nil)
 	var verr *workflow.ValidationError
 	if !errors.As(err, &verr) || verr.Problems[0].Step != "call" || !strings.Contains(verr.Problems[0].Message, "URL") {
 		t.Fatalf("err = %v", err)
 	}
 
-	_, err = f.engine.Start(context.Background(), build(nil))
+	_, err = f.engine.Start(context.Background(), build(nil), nil)
 	if !errors.As(err, &verr) || !strings.Contains(verr.Problems[0].Message, "at least one step") {
 		t.Fatalf("empty workflow: err = %v", err)
 	}
@@ -308,7 +317,7 @@ func TestCheckReportsMissingConfig(t *testing.T) {
 
 func TestShutdownCancelsRuns(t *testing.T) {
 	f := newFixture(t, 8)
-	r, err := f.engine.Start(context.Background(), build([]stepSpec{{id: "slow", block: "sleep", config: `{"ms":10000}`}}))
+	r, err := f.engine.Start(context.Background(), build([]stepSpec{{id: "slow", block: "sleep", config: `{"ms":10000}`}}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +329,7 @@ func TestShutdownCancelsRuns(t *testing.T) {
 	if got.Status != run.StatusCancelled || !strings.Contains(got.Error, "stopped") {
 		t.Errorf("run = %s %q", got.Status, got.Error)
 	}
-	if _, err := f.engine.Start(context.Background(), build([]stepSpec{{id: "a", block: "echo"}})); err == nil {
+	if _, err := f.engine.Start(context.Background(), build([]stepSpec{{id: "a", block: "echo"}}), nil); err == nil {
 		t.Error("Start after Shutdown succeeded")
 	}
 }
@@ -394,5 +403,87 @@ func TestPublishesEvents(t *testing.T) {
 	last := rec.events[len(rec.events)-1]
 	if last.Type != run.EventRun {
 		t.Errorf("last event = %s, want the final run state after all logs", last.Type)
+	}
+}
+
+type fakeSecrets map[string]string
+
+func (f fakeSecrets) Values(_ context.Context, names []string) (map[string]string, error) {
+	out := map[string]string{}
+	var missing []string
+	for _, n := range names {
+		v, ok := f[n]
+		if !ok {
+			missing = append(missing, n)
+			continue
+		}
+		out[n] = v
+	}
+	if len(missing) > 0 {
+		return nil, &secrets.MissingError{Names: missing}
+	}
+	return out, nil
+}
+
+func TestDataFlow(t *testing.T) {
+	f := newFixture(t, 8)
+	wf := build([]stepSpec{
+		{id: "tag", block: "emit", config: `{"value":"{{ inputs.version }}"}`},
+		{id: "notes", block: "emit", config: `{"value":"release {{ steps.tag.outputs.value }} by {{ inputs.who }} using {{ secrets.TOKEN }}"}`},
+	}, "tag>notes")
+	wf.Definition.Inputs = []workflow.Input{
+		{Name: "version", Type: workflow.InputText, Required: true},
+		{Name: "who", Type: workflow.InputText, Default: "conductor"},
+	}
+
+	if _, err := f.engine.Start(context.Background(), wf, nil); err == nil || !strings.Contains(err.Error(), `"version" is required`) {
+		t.Fatalf("missing required input: err = %v", err)
+	}
+
+	r, err := f.engine.Start(context.Background(), wf, map[string]any{"version": "v1.4.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := f.waitDone(t, r.ID)
+	if done.Status != run.StatusSucceeded {
+		t.Fatalf("run %s: %+v", done.Status, done.Steps)
+	}
+	if done.Inputs["version"] != "v1.4.0" || done.Inputs["who"] != "conductor" {
+		t.Errorf("recorded inputs = %v", done.Inputs)
+	}
+
+	notes := step(done, "notes")
+	want := "release v1.4.0 by conductor using " + secrets.Mask
+	if !strings.Contains(string(notes.Outputs), want) || !strings.Contains(string(notes.Config), want) {
+		t.Errorf("outputs = %s\nconfig = %s\nwant both to contain %q", notes.Outputs, notes.Config, want)
+	}
+	lines, _ := f.runs.Logs(context.Background(), r.ID, "notes", 0, 0)
+	for _, l := range lines {
+		if strings.Contains(l.Text, "s3cr3t") {
+			t.Errorf("secret leaked into logs: %q", l.Text)
+		}
+	}
+}
+
+func TestMissingSecretIsReported(t *testing.T) {
+	f := newFixture(t, 8)
+	_, err := f.engine.Start(context.Background(), build([]stepSpec{
+		{id: "call", block: "emit", config: `{"value":"{{ secrets.JIRA_TOKEN }}"}`},
+	}), nil)
+	var verr *workflow.ValidationError
+	if !errors.As(err, &verr) || verr.Problems[0].Step != "call" || !strings.Contains(verr.Problems[0].Message, "JIRA_TOKEN") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRenderErrorFailsStep(t *testing.T) {
+	f := newFixture(t, 8)
+	r, _ := f.runToEnd(t, build([]stepSpec{
+		{id: "a", block: "emit", config: `{"value":"x"}`},
+		{id: "b", block: "emit", config: `{"value":"{{ steps.a.outputs.vaule }}"}`},
+	}, "a>b"))
+	b := step(r, "b")
+	if b.Status != run.StatusFailed || !strings.HasPrefix(b.Error, "config: value:") {
+		t.Errorf("b = %s %q", b.Status, b.Error)
 	}
 }

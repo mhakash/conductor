@@ -16,6 +16,7 @@ import (
 	"conductor/internal/engine"
 	"conductor/internal/events"
 	"conductor/internal/run"
+	"conductor/internal/secrets"
 	"conductor/internal/version"
 	"conductor/internal/workflow"
 )
@@ -26,6 +27,7 @@ type Deps struct {
 	Runs      run.Repository
 	Engine    *engine.Engine
 	Broker    *events.Broker
+	Secrets   *secrets.Store
 	Blocks    *block.Registry
 	// UI is the built frontend; nil serves only the API.
 	UI fs.FS
@@ -37,6 +39,7 @@ type Server struct {
 	runs      run.Repository
 	engine    *engine.Engine
 	broker    *events.Broker
+	secrets   *secrets.Store
 	blocks    *block.Registry
 	ui        fs.FS
 	started   time.Time
@@ -54,6 +57,7 @@ func New(d Deps) *Server {
 		runs:      d.Runs,
 		engine:    d.Engine,
 		broker:    d.Broker,
+		secrets:   d.Secrets,
 		closing:   make(chan struct{}),
 		blocks:    d.Blocks,
 		ui:        d.UI,
@@ -84,6 +88,11 @@ func (s *Server) Handler() http.Handler {
 			r.Put("/{id}", s.handleUpdateWorkflow)
 			r.Delete("/{id}", s.handleDeleteWorkflow)
 			r.Post("/{id}/runs", s.handleStartRun)
+		})
+		r.Route("/secrets", func(r chi.Router) {
+			r.Get("/", s.handleListSecrets)
+			r.Put("/{name}", s.handlePutSecret)
+			r.Delete("/{name}", s.handleDeleteSecret)
 		})
 		r.Route("/runs", func(r chi.Router) {
 			r.Get("/", s.handleListRuns)

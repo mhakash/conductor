@@ -38,19 +38,23 @@ type Run struct {
 	WorkflowID   string              `json:"workflowId"`
 	WorkflowName string              `json:"workflowName"`
 	Definition   workflow.Definition `json:"definition"`
-	Status       Status              `json:"status"`
-	Error        string              `json:"error,omitempty"`
-	CreatedAt    time.Time           `json:"createdAt"`
-	StartedAt    *time.Time          `json:"startedAt"`
-	FinishedAt   *time.Time          `json:"finishedAt"`
-	Steps        []StepRun           `json:"steps"`
+	// Inputs are the values this run was started with, after defaults.
+	Inputs     map[string]any `json:"inputs"`
+	Status     Status         `json:"status"`
+	Error      string         `json:"error,omitempty"`
+	CreatedAt  time.Time      `json:"createdAt"`
+	StartedAt  *time.Time     `json:"startedAt"`
+	FinishedAt *time.Time     `json:"finishedAt"`
+	Steps      []StepRun      `json:"steps"`
 }
 
 type StepRun struct {
-	StepID     string          `json:"stepId"`
-	Status     Status          `json:"status"`
-	Error      string          `json:"error,omitempty"`
-	Outputs    json.RawMessage `json:"outputs"`
+	StepID  string          `json:"stepId"`
+	Status  Status          `json:"status"`
+	Error   string          `json:"error,omitempty"`
+	Outputs json.RawMessage `json:"outputs"`
+	// Config is the step's config with expressions evaluated and secrets masked.
+	Config     json.RawMessage `json:"config"`
 	StartedAt  *time.Time      `json:"startedAt"`
 	FinishedAt *time.Time      `json:"finishedAt"`
 }
@@ -101,7 +105,7 @@ type Repository interface {
 
 	StartRun(ctx context.Context, id string, at time.Time) error
 	FinishRun(ctx context.Context, id string, status Status, errMsg string, at time.Time) error
-	StartStep(ctx context.Context, runID, stepID string, at time.Time) error
+	StartStep(ctx context.Context, runID, stepID string, config json.RawMessage, at time.Time) error
 	FinishStep(ctx context.Context, runID, stepID string, status Status, outputs json.RawMessage, errMsg string, at time.Time) error
 
 	// AppendLogs stores lines and returns them with their Seq assigned.

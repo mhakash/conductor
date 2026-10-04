@@ -16,6 +16,7 @@ import (
 	"conductor/internal/config"
 	"conductor/internal/engine"
 	"conductor/internal/events"
+	"conductor/internal/secrets"
 	"conductor/internal/server"
 	"conductor/internal/store"
 	"conductor/internal/version"
@@ -57,9 +58,26 @@ func run() error {
 		log.Warn("marked interrupted runs as failed", "count", n)
 	}
 
+	key, err := secrets.LoadKey(cfg.DataDir, log)
+	if err != nil {
+		return err
+	}
+	cipher, err := secrets.NewCipher(key)
+	if err != nil {
+		return err
+	}
+	secretStore := secrets.NewStore(db, cipher)
+
 	blocks := block.Builtin()
 	broker := events.NewBroker()
-	eng := engine.New(engine.Options{Runs: runs, Blocks: blocks, Events: broker, Log: log, MaxParallel: cfg.MaxParallel})
+	eng := engine.New(engine.Options{
+		Runs:        runs,
+		Blocks:      blocks,
+		Events:      broker,
+		Secrets:     secretStore,
+		Log:         log,
+		MaxParallel: cfg.MaxParallel,
+	})
 
 	ui := web.UI()
 	if cfg.Dev {
@@ -72,6 +90,7 @@ func run() error {
 		Runs:      runs,
 		Engine:    eng,
 		Broker:    broker,
+		Secrets:   secretStore,
 		Blocks:    blocks,
 		UI:        ui,
 	})
