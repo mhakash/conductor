@@ -16,16 +16,19 @@ import { motion, useReducedMotion } from 'motion/react'
 import { memo, useMemo } from 'react'
 
 import { StepCard, type StepTone } from '@/components/flow/StepCard'
+import { StepTraits } from '@/components/flow/StepTraits'
+import type { Step } from '@/features/workflows/api'
 import { useBlockMap } from '@/features/blocks/api'
+import { cn } from '@/lib/cn'
 import { elapsed, formatDuration } from '@/lib/time'
 import { useNow } from '@/lib/useNow'
 
-import { statusLabel, type Run, type RunStatus, type StepRun } from './api'
+import { type Run, type RunStatus, type StepRun } from './api'
 import { StatusIcon } from './StatusIcon'
+import { stepSummary } from './summary'
 
 type RunNodeData = {
-  block: string
-  name: string
+  def: Step
   step: StepRun
   selected: boolean
 }
@@ -42,6 +45,7 @@ type RunEdge = Edge<{ state: EdgeState }, 'runEdge'>
 const toneFor: Record<RunStatus, StepTone> = {
   queued: 'default',
   running: 'active',
+  waiting: 'active',
   succeeded: 'success',
   failed: 'danger',
   cancelled: 'muted',
@@ -55,9 +59,9 @@ function edgeState(source: RunStatus, target: RunStatus): EdgeState {
 }
 
 const RunStepNode = memo(function RunStepNode({ id, data }: NodeProps<RunNode>) {
-  const block = useBlockMap().get(data.block)
-  const { step } = data
-  const now = useNow(step.status === 'running')
+  const block = useBlockMap().get(data.def.block)
+  const { step, def } = data
+  const now = useNow(step.status === 'running' || step.status === 'waiting')
   const took = elapsed(step.startedAt, step.finishedAt, now)
 
   return (
@@ -66,14 +70,17 @@ const RunStepNode = memo(function RunStepNode({ id, data }: NodeProps<RunNode>) 
       <Handle type="target" position={Position.Left} isConnectable={false} className={anchor} />
       <StepCard
         icon={block?.icon ?? ''}
-        block={data.block}
+        block={def.block}
         id={id}
-        name={data.name || block?.name || id}
+        name={def.name || block?.name || id}
         tone={data.selected ? 'selected' : toneFor[step.status]}
         badge={<StatusIcon status={step.status} className="size-3.5" />}
+        traits={<StepTraits settings={def} />}
         footer={
           <span className="flex items-center justify-between gap-2 text-fg-subtle">
-            <span className="truncate">{step.error || statusLabel(step.status)}</span>
+            <span className={cn('truncate', step.status === 'waiting' && 'text-brass')}>
+              {stepSummary(step, def)}
+            </span>
             {took !== null && (
               <span className="shrink-0 font-mono tabular-nums">{formatDuration(took)}</span>
             )}
@@ -152,7 +159,7 @@ export function RunGraph({ run, selectedId, onSelect }: RunGraphProps) {
             id: s.id,
             type: 'runStep' as const,
             position: s.position,
-            data: { block: s.block, name: s.name, step, selected: s.id === selectedId },
+            data: { def: s, step, selected: s.id === selectedId },
             draggable: false,
             connectable: false,
           },

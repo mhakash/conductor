@@ -19,7 +19,7 @@ import { createContext, useContext } from 'react'
 export type ExpressionOption = {
   path: string
   detail: string
-  kind: 'step' | 'input' | 'secret' | 'run'
+  kind: 'item' | 'step' | 'input' | 'secret' | 'run'
 }
 
 export const ExpressionScope = createContext<ExpressionOption[]>([])
@@ -60,27 +60,31 @@ const highlightExpressions = ViewPlugin.fromClass(
   { decorations: (v) => v.decorations },
 )
 
-// Upstream outputs are what you reach for most, so they lead the list.
-const boostFor: Record<ExpressionOption['kind'], number> = { step: 3, input: 2, secret: 1, run: 0 }
+// The loop item and upstream outputs are what you reach for most, so they lead the list.
+const boostFor: Record<ExpressionOption['kind'], number> = {
+  item: 4,
+  step: 3,
+  input: 2,
+  secret: 1,
+  run: 0,
+}
 
 const typeFor: Record<ExpressionOption['kind'], string> = {
+  item: 'variable',
   step: 'property',
   input: 'variable',
   secret: 'constant',
   run: 'keyword',
 }
 
-function completeExpressions() {
+function completeExpressions(bare: boolean) {
   return (ctx: CompletionContext): CompletionResult | null => {
     const line = ctx.state.doc.lineAt(ctx.pos)
-    if (!insideExpression(line.text.slice(0, ctx.pos - line.from))) return null
+    const before = line.text.slice(0, ctx.pos - line.from)
+    if (!bare && !insideExpression(before)) return null
     const word = ctx.matchBefore(/[\w.]*/)
-    if (
-      !word ||
-      (word.from === word.to &&
-        !ctx.explicit &&
-        !/\{\{\s*$/.test(line.text.slice(0, ctx.pos - line.from)))
-    ) {
+    const justOpened = bare ? before.trim() === '' : /\{\{\s*$/.test(before)
+    if (!word || (word.from === word.to && !ctx.explicit && !justOpened)) {
       return null
     }
     const options: Completion[] = ctx.state.field(scopeField).map((o) => ({
@@ -127,14 +131,15 @@ const theme = EditorView.theme({
 })
 
 /**
- * Highlighting and completion for `{{ … }}` in a CodeMirror field. Set what
- * completion offers by dispatching setExpressionScope.
+ * Highlighting and completion for `{{ … }}` in a CodeMirror field, or, with
+ * bare set, for a field that holds a single expression without braces. Set
+ * what completion offers by dispatching setExpressionScope.
  */
-export function expressionSupport(): Extension {
+export function expressionSupport({ bare = false } = {}): Extension {
   return [
     scopeField,
-    highlightExpressions,
-    autocompletion({ override: [completeExpressions()], icons: false, activateOnTyping: true }),
+    ...(bare ? [] : [highlightExpressions]),
+    autocompletion({ override: [completeExpressions(bare)], icons: false, activateOnTyping: true }),
     theme,
   ]
 }

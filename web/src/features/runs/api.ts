@@ -3,14 +3,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Definition } from '@/features/workflows/api'
 import { api } from '@/lib/api'
 
-export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'skipped'
+export type RunStatus =
+  'queued' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'skipped'
 
-export const isActive = (s: RunStatus) => s === 'queued' || s === 'running'
+/** Not finished yet: the run can still change, so keep it live. */
+export const isActive = (s: RunStatus) => s === 'queued' || s === 'running' || s === 'waiting'
 
 export const statusLabel = (s: RunStatus) =>
   ({
     queued: 'Queued',
     running: 'Running',
+    waiting: 'Waiting for approval',
     succeeded: 'Succeeded',
     failed: 'Failed',
     cancelled: 'Cancelled',
@@ -22,10 +25,18 @@ export type StepRun = {
   status: RunStatus
   error?: string
   outputs: Record<string, unknown>
-  /** The config this step ran with: expressions evaluated, secrets masked. */
-  config?: Record<string, unknown>
+  /**
+   * The config this step ran with: expressions evaluated, secrets masked.
+   * A list, one per item, for a step that runs once per item.
+   */
+  config?: Record<string, unknown> | Record<string, unknown>[]
   startedAt: string | null
   finishedAt: string | null
+  /** Tries so far, for a step that retries. */
+  attempt?: number
+  /** For a step that runs once per item. */
+  items?: number
+  itemsDone?: number
 }
 
 export type Run = {
@@ -50,6 +61,8 @@ export type LogLine = {
   stream: 'stdout' | 'stderr' | 'system'
   text: string
   time: string
+  /** Loop index, for lines from a step that runs once per item. */
+  item?: number
 }
 
 // A single run streams live (see stream.ts); lists of runs are polled while
@@ -71,6 +84,15 @@ export function useRuns(workflowId?: string) {
     queryFn: ({ signal }) =>
       api.get<RunSummary[]>(`/runs${workflowId ? `?workflowId=${workflowId}` : ''}`, { signal }),
     refetchInterval: (q) => (q.state.data?.some((r) => isActive(r.status)) ? LIST_POLL_MS : false),
+  })
+}
+
+/** Runs waiting for someone to approve a step, for the sidebar. */
+export function useWaitingRuns() {
+  return useQuery({
+    queryKey: [...keys.lists, 'waiting'],
+    queryFn: ({ signal }) => api.get<RunSummary[]>('/runs?status=waiting', { signal }),
+    refetchInterval: 5000,
   })
 }
 
@@ -106,6 +128,22 @@ export function useStartRun() {
       qc.setQueryData(keys.one(run.id), run)
       void qc.invalidateQueries({ queryKey: keys.all })
     },
+  })
+}
+
+export function useDecide(runId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      stepId,
+      approve,
+      comment,
+    }: {
+      stepId: string
+      approve: boolean
+      comment: string
+    }) => api.post<void>(`/runs/${runId}/steps/${stepId}/decision`, { approve, comment }),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.lists }),
   })
 }
 

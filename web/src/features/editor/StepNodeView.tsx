@@ -3,6 +3,7 @@ import { AlertTriangle } from 'lucide-react'
 import { memo } from 'react'
 
 import { StepCard } from '@/components/flow/StepCard'
+import { StepTraits } from '@/components/flow/StepTraits'
 import { missingFields, useBlockMap } from '@/features/blocks/api'
 import { statusLabel } from '@/features/runs/api'
 import { StatusIcon } from '@/features/runs/StatusIcon'
@@ -33,7 +34,7 @@ function StepNodeViewImpl({ id, data, selected }: NodeProps<StepNode>) {
             ? 'selected'
             : hasProblem
               ? 'danger'
-              : lastStatus === 'running'
+              : lastStatus === 'running' || lastStatus === 'waiting'
                 ? 'active'
                 : 'default'
         }
@@ -48,6 +49,7 @@ function StepNodeViewImpl({ id, data, selected }: NodeProps<StepNode>) {
             </span>
           )
         }
+        traits={<StepTraits settings={data} />}
         footer={
           hasProblem ? (
             <span className="flex items-center gap-1 text-coral">

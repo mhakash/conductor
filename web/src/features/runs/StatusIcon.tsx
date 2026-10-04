@@ -4,6 +4,7 @@ import {
   CircleDashed,
   CircleSlash,
   CircleX,
+  Hand,
   LoaderCircle,
   type LucideIcon,
 } from 'lucide-react'
@@ -18,6 +19,7 @@ const styles: Record<RunStatus, { icon: LucideIcon; className: string }> = {
     icon: LoaderCircle,
     className: 'text-brass animate-spin motion-reduce:animate-none',
   },
+  waiting: { icon: Hand, className: 'text-brass animate-pulse motion-reduce:animate-none' },
   succeeded: { icon: CircleCheck, className: 'text-sage' },
   failed: { icon: CircleX, className: 'text-coral' },
   cancelled: { icon: CircleSlash, className: 'text-fg-subtle' },

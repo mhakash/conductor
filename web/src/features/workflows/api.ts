@@ -10,7 +10,32 @@ export type Step = {
   name: string
   config: Record<string, unknown>
   position: Position
+} & StepSettings
+
+export type Retry = {
+  /** Retries after the first attempt. */
+  max: number
+  /** Go duration before the first retry; default 10s. */
+  delay?: string
+  backoff?: 'fixed' | 'exponential'
+}
+
+export type ForEach = {
+  /** Expression (without {{ }}) that evaluates to a list. */
+  items: string
+  /** Items at a time; default 1. */
+  concurrency?: number
+}
+
+/** How a step runs, independent of its block. See ADR 0006. */
+export type StepSettings = {
+  /** Go duration such as "30s" or "10m"; empty means the engine default. */
   timeout?: string
+  /** Expression (without {{ }}); the step is skipped unless it is true. */
+  if?: string
+  retry?: Retry
+  continueOnError?: boolean
+  forEach?: ForEach
 }
 
 export type Edge = { from: string; to: string }

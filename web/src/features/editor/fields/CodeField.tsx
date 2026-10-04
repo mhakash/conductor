@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import {
   expressionSupport,
   setExpressionScope,
-  singleLine,
+  singleLine as singleLineFilter,
   useExpressionScope,
 } from './expressions'
 
@@ -62,6 +62,9 @@ const singleLineTheme = EditorView.theme({
   '.cm-scroller': { overflow: 'hidden' },
 })
 
+// An expression field reads as code throughout, like the inside of {{ }}.
+const expressionTheme = EditorView.theme({ '.cm-content': { color: 'var(--color-brass)' } })
+
 type CodeFieldProps = {
   id: string
   value: string
@@ -70,6 +73,8 @@ type CodeFieldProps = {
   placeholder?: string
   /** Behave like a one-line text input (no wrapping, Enter does nothing). */
   singleLine?: boolean
+  /** The whole value is one expression, written without {{ }}. Implies singleLine. */
+  expression?: boolean
 }
 
 /**
@@ -82,8 +87,10 @@ export function CodeField({
   onChange,
   language,
   placeholder,
-  singleLine: oneLine,
+  singleLine,
+  expression = false,
 }: CodeFieldProps) {
+  const oneLine = singleLine || expression
   const scope = useExpressionScope()
   const view = useRef<EditorView | null>(null)
   useEffect(() => {
@@ -96,11 +103,12 @@ export function CodeField({
     return [
       theme,
       highlight,
-      expressionSupport(),
-      ...(oneLine ? [singleLine, singleLineTheme] : [EditorView.lineWrapping]),
+      expressionSupport({ bare: expression }),
+      ...(oneLine ? [singleLineFilter, singleLineTheme] : [EditorView.lineWrapping]),
+      ...(expression ? [expressionTheme] : []),
       ...(lang ? [lang()] : []),
     ]
-  }, [language, oneLine])
+  }, [language, oneLine, expression])
 
   return (
     <CodeMirror

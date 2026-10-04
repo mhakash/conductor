@@ -12,6 +12,7 @@ import type { InputType, WorkflowInput } from '@/features/workflows/api'
 import { ConfigField } from './fields/ConfigField'
 import { ExpressionScope, type ExpressionOption } from './fields/expressions'
 import { ancestorsOf, type StepNode } from './graph'
+import { StepSettings } from './StepSettings'
 import { useEditor } from './store'
 
 export function Inspector({ blocks }: { blocks: Map<string, Block> }) {
@@ -54,6 +55,10 @@ function StepInspector({
   blocks: Map<string, Block>
 }) {
   const scope = useStepScope(step.id, blocks)
+  const configScope = useMemo(
+    () => (step.data.forEach ? [...itemScope, ...scope] : scope),
+    [step.data.forEach, scope],
+  )
   const updateStep = useEditor((s) => s.updateStep)
   const removeStep = useEditor((s) => s.removeStep)
   const problems = useEditor(useShallow((s) => s.problems.filter((p) => p.step === step.id)))
@@ -99,7 +104,7 @@ function StepInspector({
             Type <code className="font-mono text-brass">{'{{'}</code> to use outputs of earlier
             steps, inputs or secrets.
           </p>
-          <ExpressionScope.Provider value={scope}>
+          <ExpressionScope.Provider value={configScope}>
             {block.fields.map((f) => (
               <ConfigField
                 key={f.key}
@@ -113,32 +118,28 @@ function StepInspector({
       )}
 
       <Section title="Settings">
-        <FormField
-          label="Timeout"
-          htmlFor="step-timeout"
-          help="How long the step may run, e.g. 30s, 10m or 2h. Defaults to 1h."
-        >
-          <Input
-            id="step-timeout"
-            value={step.data.timeout ?? ''}
-            placeholder="1h"
-            className="font-mono text-xs"
-            spellCheck={false}
-            onChange={(e) => updateStep(step.id, { timeout: e.target.value })}
+        <ExpressionScope.Provider value={scope}>
+          <StepSettings
+            stepId={step.id}
+            block={step.data.block}
+            settings={step.data}
+            onChange={(patch) => updateStep(step.id, patch)}
           />
-        </FormField>
+        </ExpressionScope.Provider>
       </Section>
 
       {block.outputs.length > 0 && (
         <Section title="Outputs for later steps">
           <dl className="flex flex-col gap-2.5">
-            {block.outputs.map((o) => (
-              <div key={o.key}>
-                <dt className="font-mono text-xs text-fg">
-                  <span className="text-fg-subtle">steps.{step.id}.outputs.</span>
-                  {o.key}
+            {outputsOf(step.id, block, !!step.data.forEach).map((o) => (
+              <div key={o.path}>
+                <dt className="font-mono text-xs break-all text-fg">
+                  <span className="text-fg-subtle">
+                    {o.path.slice(0, o.path.lastIndexOf('.') + 1)}
+                  </span>
+                  {o.path.slice(o.path.lastIndexOf('.') + 1)}
                 </dt>
-                <dd className="text-xs text-fg-subtle">{o.description}</dd>
+                <dd className="text-xs text-fg-subtle">{o.detail}</dd>
               </div>
             ))}
           </dl>
@@ -254,12 +255,9 @@ function useStepScope(stepId: string, blocks: Map<string, Block>): ExpressionOpt
     for (const n of nodes) {
       if (!ancestors.has(n.id)) continue
       const b = blocks.get(n.data.block)
-      for (const o of b?.outputs ?? []) {
-        options.push({
-          path: `steps.${n.id}.outputs.${o.key}`,
-          detail: `${n.data.name || n.id} · ${o.description}`,
-          kind: 'step',
-        })
+      if (!b) continue
+      for (const o of outputsOf(n.id, b, !!n.data.forEach)) {
+        options.push({ ...o, detail: `${n.data.name || n.id} · ${o.detail}` })
       }
     }
     for (const i of inputs) {
@@ -278,6 +276,36 @@ function useStepScope(stepId: string, blocks: Map<string, Block>): ExpressionOpt
     )
     return options
   }, [stepId, nodes, edges, inputs, secrets, blocks])
+}
+
+const itemScope: ExpressionOption[] = [
+  { path: 'item', detail: 'The current item of the list', kind: 'item' },
+  { path: 'index', detail: 'Its position, from 0', kind: 'item' },
+]
+
+/** What later steps can read of a step: its outputs (per item, for a loop) and its status. */
+function outputsOf(id: string, block: Block, loops: boolean): ExpressionOption[] {
+  const outputs: ExpressionOption[] = loops
+    ? [
+        {
+          path: `steps.${id}.outputs.results`,
+          detail: `One per item, each with ${block.outputs.map((o) => o.key).join(', ')}`,
+          kind: 'step',
+        },
+      ]
+    : block.outputs.map((o) => ({
+        path: `steps.${id}.outputs.${o.key}`,
+        detail: o.description,
+        kind: 'step',
+      }))
+  return [
+    ...outputs,
+    {
+      path: `steps.${id}.status`,
+      detail: 'succeeded, failed or skipped',
+      kind: 'step',
+    },
+  ]
 }
 
 const inputTypes: { value: InputType; label: string }[] = [

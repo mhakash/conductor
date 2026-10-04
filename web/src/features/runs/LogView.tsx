@@ -61,6 +61,11 @@ export function LogView({ lines, follow, empty }: LogViewProps) {
               l.stream === 'system' && 'text-brass-dim',
             )}
           >
+            {l.item !== undefined && (
+              <span className="mr-2 text-fg-subtle select-none" title={`Item ${l.item + 1}`}>
+                #{l.item + 1}
+              </span>
+            )}
             {l.text || ' '}
           </span>
         </div>

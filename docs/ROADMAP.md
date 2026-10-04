@@ -29,8 +29,8 @@ Steps without a dependency path between them run in parallel.
       the editor shows each step's status from the latest run.
 - [x] **4 — Data flow.** Step outputs, expressions, workflow inputs, encrypted
       secrets.
-- [ ] **5 — Control flow.** Conditions/branches, retries, continue-on-error,
-      manual approval, loops over lists.
+- [x] **5 — Control flow.** Conditions/branches, retries, continue-on-error,
+      manual approval (survives restarts), loops over lists. See ADR 0006.
 - [ ] **6 — Reuse.** Sub-workflows as steps, saved block presets, a library.
 - [ ] **7 — Code execution.** Script blocks (Python, Node, Bash, Go) with an
       in-app editor; optional per-step Docker isolation.

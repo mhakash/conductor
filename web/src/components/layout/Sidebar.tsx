@@ -4,6 +4,7 @@ import { NavLink } from 'react-router'
 
 import { Tooltip } from '@/components/ui/Tooltip'
 import { EngineStatus } from '@/features/engine/EngineStatus'
+import { useWaitingRuns } from '@/features/runs/api'
 import { cn } from '@/lib/cn'
 
 type NavItem = { to: string; label: string; icon: LucideIcon }
@@ -20,6 +21,8 @@ const nav: NavItem[] = [
  */
 export function Sidebar({ rail = false }: { rail?: boolean }) {
   const wide = !rail
+  // Runs waiting for approval need you, wherever you are in the app.
+  const waiting = useWaitingRuns().data?.length ?? 0
   return (
     <aside
       className={cn(
@@ -38,7 +41,12 @@ export function Sidebar({ rail = false }: { rail?: boolean }) {
 
       <nav aria-label="Main" className="flex flex-1 flex-col gap-0.5 px-2 pt-2">
         {nav.map((item) => (
-          <SidebarLink key={item.to} item={item} wide={wide} />
+          <SidebarLink
+            key={item.to}
+            item={item}
+            wide={wide}
+            badge={item.to === '/runs' ? waiting : 0}
+          />
         ))}
       </nav>
 
@@ -56,11 +64,15 @@ export function Sidebar({ rail = false }: { rail?: boolean }) {
   )
 }
 
-function SidebarLink({ item, wide }: { item: NavItem; wide: boolean }) {
+function SidebarLink({ item, wide, badge }: { item: NavItem; wide: boolean; badge: number }) {
   const Icon = item.icon
+  const waitingLabel = badge > 0 ? `${badge} waiting for approval` : ''
   return (
     // When labels are visible the tooltip would repeat them, so hide it.
-    <Tooltip label={item.label} className={cn(wide && 'md:hidden')}>
+    <Tooltip
+      label={waitingLabel ? `${item.label} · ${waitingLabel}` : item.label}
+      className={cn(wide && 'md:hidden')}
+    >
       {/* className must be a string: the tooltip trigger merges it via Radix Slot. */}
       <NavLink
         to={item.to}
@@ -78,8 +90,30 @@ function SidebarLink({ item, wide }: { item: NavItem; wide: boolean }) {
                 transition={{ type: 'spring', stiffness: 500, damping: 40 }}
               />
             )}
-            <Icon className="size-4 shrink-0" strokeWidth={1.75} />
+            <span className="relative">
+              <Icon className="size-4 shrink-0" strokeWidth={1.75} />
+              {badge > 0 && (
+                <span
+                  aria-hidden
+                  className={cn(
+                    'absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-brass motion-reduce:animate-none',
+                    wide && 'md:hidden',
+                  )}
+                />
+              )}
+            </span>
             {wide && <span className="hidden md:inline">{item.label}</span>}
+            {badge > 0 && (
+              <span
+                aria-label={waitingLabel}
+                className={cn(
+                  'ml-auto hidden rounded-full bg-brass/15 px-1.5 font-mono text-[11px] text-brass tabular-nums',
+                  wide && 'md:inline',
+                )}
+              >
+                {badge}
+              </span>
+            )}
           </>
         )}
       </NavLink>

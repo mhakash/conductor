@@ -1,6 +1,6 @@
 import type { Edge as FlowEdge, Node, XYPosition } from '@xyflow/react'
 
-import type { Definition, Edge, Step, WorkflowInput } from '@/features/workflows/api'
+import type { Definition, Edge, Step, StepSettings, WorkflowInput } from '@/features/workflows/api'
 
 export const SCHEMA_VERSION = 1
 
@@ -8,9 +8,7 @@ export type StepData = {
   block: string
   name: string
   config: Record<string, unknown>
-  /** Go duration such as "30s" or "10m"; empty means the engine default. */
-  timeout?: string
-}
+} & StepSettings
 
 export type StepNode = Node<StepData, 'step'>
 
@@ -26,7 +24,16 @@ export function toFlow(def: Definition): { nodes: StepNode[]; edges: FlowEdge[] 
       id: s.id,
       type: 'step',
       position: s.position,
-      data: { block: s.block, name: s.name, config: s.config ?? {}, timeout: s.timeout },
+      data: {
+        block: s.block,
+        name: s.name,
+        config: s.config ?? {},
+        timeout: s.timeout,
+        if: s.if,
+        retry: s.retry,
+        continueOnError: s.continueOnError,
+        forEach: s.forEach,
+      },
     })),
     edges: def.edges.map((e) => ({ id: edgeId(e), source: e.from, target: e.to })),
   }
@@ -43,7 +50,7 @@ export function toDefinition(
     name: n.data.name,
     config: n.data.config,
     position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
-    ...(n.data.timeout?.trim() && { timeout: n.data.timeout.trim() }),
+    ...cleanSettings(n.data),
   }))
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -54,6 +61,26 @@ export function toDefinition(
 }
 
 /** True if adding source → target would close a loop (or is a self-edge). */
+/** Drops settings left empty in the inspector, so they don't reach the definition. */
+export function cleanSettings(d: StepSettings): StepSettings {
+  const out: StepSettings = {}
+  if (d.timeout?.trim()) out.timeout = d.timeout.trim()
+  if (d.if?.trim()) out.if = d.if.trim()
+  if (d.retry && d.retry.max > 0) {
+    out.retry = { max: d.retry.max }
+    if (d.retry.delay?.trim()) out.retry.delay = d.retry.delay.trim()
+    if (d.retry.backoff === 'exponential') out.retry.backoff = 'exponential'
+  }
+  if (d.continueOnError) out.continueOnError = true
+  if (d.forEach) {
+    out.forEach = { items: d.forEach.items.trim() }
+    if (d.forEach.concurrency && d.forEach.concurrency > 1) {
+      out.forEach.concurrency = d.forEach.concurrency
+    }
+  }
+  return out
+}
+
 export function wouldCreateCycle(edges: FlowEdge[], source: string, target: string): boolean {
   if (source === target) return true
   // A cycle appears if source is already reachable from target.

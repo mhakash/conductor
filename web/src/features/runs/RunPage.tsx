@@ -1,9 +1,11 @@
-import { ChevronLeft, Play, Square, Workflow as WorkflowIcon } from 'lucide-react'
-import { useMemo, type ReactNode } from 'react'
+import { ChevronLeft, Hand, Play, Square, Workflow as WorkflowIcon } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/Button'
+import { Textarea } from '@/components/ui/Input'
+import type { Step } from '@/features/workflows/api'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { elapsed, formatDuration, timeAgo } from '@/lib/time'
@@ -12,6 +14,7 @@ import { useNow } from '@/lib/useNow'
 import {
   isActive,
   useCancelRun,
+  useDecide,
   useRun,
   useRunLogs,
   type LogLine,
@@ -23,6 +26,7 @@ import { RunGraph } from './RunGraph'
 import { useRunStream } from './stream'
 import { executionOrder } from './order'
 import { StatusBadge, StatusIcon } from './StatusIcon'
+import { stepSummary } from './summary'
 import { useRunWorkflow } from './useRunWorkflow'
 
 export function RunPage() {
@@ -67,10 +71,13 @@ function RunView({ run }: { run: Run }) {
   )
 
   // Explicit choice first; otherwise follow what's most interesting right now:
-  // a failure, the step in progress, or — once done — where the run ended.
+  // a failure, a step waiting for you, the step in progress, or — once done —
+  // where the run ended.
+  const waiting = run.steps.find((s) => s.status === 'waiting')
   const selectedId =
     params.get('step') ??
-    run.steps.find((s) => s.status === 'failed')?.stepId ??
+    run.steps.find((s) => s.status === 'failed' && !defs.get(s.stepId)?.continueOnError)?.stepId ??
+    waiting?.stepId ??
     run.steps.findLast((s) => s.status === 'running')?.stepId ??
     (active ? order[0]?.id : order.at(-1)?.id)
   const selected = selectedId ? stepRuns.get(selectedId) : undefined
@@ -97,6 +104,19 @@ function RunView({ run }: { run: Run }) {
         <p className="border-b border-line bg-coral/5 px-4 py-2.5 text-coral md:px-6">
           {run.error}
         </p>
+      )}
+
+      {waiting && waiting.stepId !== selectedId && (
+        <div className="flex animate-fade-in items-center gap-3 border-b border-line bg-brass/5 px-4 py-2 md:px-6">
+          <Hand className="size-4 shrink-0 text-brass" strokeWidth={1.75} />
+          <p className="min-w-0 flex-1 truncate text-fg">
+            <span className="font-medium">{defs.get(waiting.stepId)?.name || waiting.stepId}</span>{' '}
+            <span className="text-fg-muted">is waiting for your approval.</span>
+          </p>
+          <Button variant="secondary" onClick={() => select(waiting.stepId)}>
+            Review
+          </Button>
+        </div>
       )}
 
       <section
@@ -148,6 +168,8 @@ function RunView({ run }: { run: Run }) {
               step={selected}
               name={defs.get(selected.stepId)?.name || selected.stepId}
               block={defs.get(selected.stepId)?.block ?? ''}
+              def={defs.get(selected.stepId)}
+              runId={run.id}
               lines={(logs.data ?? []).filter((l) => l.stepId === selected.stepId)}
               now={now}
             />
@@ -236,15 +258,19 @@ type StepDetailProps = {
   step: StepRun
   name: string
   block: string
+  def: Step | undefined
+  runId: string
   lines: LogLine[]
   now: number
 }
 
-function StepDetail({ step, name, block, lines, now }: StepDetailProps) {
+function StepDetail({ step, name, block, def, runId, lines, now }: StepDetailProps) {
   const d = elapsed(step.startedAt, step.finishedAt, now)
   const outputs = Object.entries(step.outputs ?? {})
-  // The config after expressions were evaluated (secrets masked).
-  const config = Object.entries(step.config ?? {})
+  // The config after expressions were evaluated (secrets masked); one per
+  // item for a step that runs once per item.
+  const configs = Array.isArray(step.config) ? step.config : [step.config ?? {}]
+  const progress = step.status === 'running' ? stepSummary(step, def) : null
   const empty =
     step.status === 'queued'
       ? 'Waiting for its dependencies.'
@@ -260,8 +286,18 @@ function StepDetail({ step, name, block, lines, now }: StepDetailProps) {
         <span className="font-mono text-xs text-fg-subtle">
           {block} · {step.stepId}
           {d !== null && ` · ${formatDuration(d)}`}
+          {progress && progress !== 'Running' && ` · ${progress}`}
         </span>
       </div>
+
+      {step.status === 'waiting' && (
+        <ApprovalCard
+          runId={runId}
+          stepId={step.stepId}
+          message={(configs[0]?.message as string | undefined) ?? ''}
+          since={step.startedAt}
+        />
+      )}
 
       {step.error && (
         <p
@@ -273,6 +309,11 @@ function StepDetail({ step, name, block, lines, now }: StepDetailProps) {
           )}
         >
           {step.error}
+          {step.status === 'failed' && def?.continueOnError && (
+            <span className="mt-0.5 block text-xs text-fg-muted">
+              This step is allowed to fail, so the steps after it ran anyway.
+            </span>
+          )}
         </p>
       )}
 
@@ -280,9 +321,21 @@ function StepDetail({ step, name, block, lines, now }: StepDetailProps) {
         <LogView lines={lines} follow={step.status === 'running'} empty={empty} />
       </Panel>
 
-      {config.length > 0 && (
-        <Panel title="Ran with">
-          <KeyValues entries={config} />
+      {configs.length === 1 && Object.keys(configs[0]).length > 0 && (
+        <Panel title={step.status === 'waiting' ? 'Waiting with' : 'Ran with'}>
+          <KeyValues entries={Object.entries(configs[0])} />
+        </Panel>
+      )}
+      {configs.length > 1 && (
+        <Panel title={`Ran with · ${configs.length} items`}>
+          <div className="divide-y divide-line">
+            {configs.map((c, i) => (
+              <div key={i}>
+                <p className="px-4 pt-2.5 font-mono text-[11px] text-fg-subtle">#{i + 1}</p>
+                <KeyValues entries={Object.entries(c)} />
+              </div>
+            ))}
+          </div>
         </Panel>
       )}
 
@@ -292,6 +345,66 @@ function StepDetail({ step, name, block, lines, now }: StepDetailProps) {
         </Panel>
       )}
     </div>
+  )
+}
+
+function ApprovalCard({
+  runId,
+  stepId,
+  message,
+  since,
+}: {
+  runId: string
+  stepId: string
+  message: string
+  since: string | null
+}) {
+  const [comment, setComment] = useState('')
+  const decide = useDecide(runId)
+
+  const submit = (approve: boolean) =>
+    decide.mutate(
+      { stepId, approve, comment: comment.trim() },
+      {
+        onSuccess: () => toast(approve ? 'Approved' : 'Rejected'),
+        onError: (err) => toast.error(`Couldn't send your decision: ${err.message}`),
+      },
+    )
+
+  return (
+    <section
+      aria-label="Approval"
+      className="flex animate-pop-in flex-col gap-3 rounded-xl border border-brass/40 bg-brass/5 p-4"
+    >
+      <p className="flex items-center gap-2 text-[11px] font-medium tracking-wide text-brass uppercase">
+        <Hand className="size-3.5" strokeWidth={2} />
+        Waiting for your approval
+        {since && (
+          <span className="font-normal tracking-normal text-fg-subtle normal-case">
+            · since {timeAgo(since)}
+          </span>
+        )}
+      </p>
+      <p className="text-[15px] whitespace-pre-wrap text-fg">
+        {message || 'Approve to let the run continue.'}
+      </p>
+      <Textarea
+        aria-label="Comment"
+        placeholder="Comment (optional) — later steps can read it"
+        value={comment}
+        rows={2}
+        onChange={(e) => setComment(e.target.value)}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button onClick={() => submit(true)} disabled={decide.isPending}>
+          Approve
+        </Button>
+        <Button variant="danger" onClick={() => submit(false)} disabled={decide.isPending}>
+          Reject
+        </Button>
+        <span className="text-xs text-fg-subtle">Rejecting fails this step.</span>
+      </div>
+    </section>
   )
 }
 

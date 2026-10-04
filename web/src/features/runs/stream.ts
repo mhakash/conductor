@@ -44,6 +44,9 @@ export function applyEvent(qc: QueryClient, id: string, e: RunEvent) {
   }
 }
 
+const RETRY_FIRST_MS = 1000
+const RETRY_MAX_MS = 15_000
+
 /**
  * Keeps the cached run and its logs live while `active`. The server sends a
  * snapshot first, so (re)connecting never loses anything.
@@ -54,22 +57,42 @@ export function useRunStream(id: string, active: boolean): { live: boolean } {
 
   useEffect(() => {
     if (!active) return
-    const source = new EventSource(`/api/runs/${id}/events`)
-    source.onopen = () => setLive(true)
-    // EventSource reconnects by itself; just reflect the gap.
-    source.onerror = () => setLive(false)
-    source.onmessage = (m) => {
-      const e = JSON.parse(m.data as string) as RunEvent
-      if (e.type === 'end') {
-        source.close()
-        setLive(false)
-        void qc.invalidateQueries({ queryKey: runKeys.lists })
-        return
+    let source: EventSource | undefined
+    let retry: ReturnType<typeof setTimeout> | undefined
+    let delay = RETRY_FIRST_MS
+
+    const connect = () => {
+      source = new EventSource(`/api/runs/${id}/events`)
+      source.onopen = () => {
+        setLive(true)
+        delay = RETRY_FIRST_MS
       }
-      applyEvent(qc, id, e)
+      source.onerror = () => {
+        setLive(false)
+        // EventSource retries dropped connections itself, but gives up for
+        // good on an HTTP error, e.g. a 502 while Conductor restarts. Runs
+        // waiting for approval survive restarts, so keep trying.
+        if (source?.readyState === EventSource.CLOSED) {
+          retry = setTimeout(connect, delay)
+          delay = Math.min(delay * 2, RETRY_MAX_MS)
+        }
+      }
+      source.onmessage = (m) => {
+        const e = JSON.parse(m.data as string) as RunEvent
+        if (e.type === 'end') {
+          source?.close()
+          setLive(false)
+          void qc.invalidateQueries({ queryKey: runKeys.lists })
+          return
+        }
+        applyEvent(qc, id, e)
+      }
     }
+    connect()
+
     return () => {
-      source.close()
+      clearTimeout(retry)
+      source?.close()
       setLive(false)
     }
   }, [id, active, qc])

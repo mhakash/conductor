@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   ancestorsOf,
+  cleanSettings,
   findFreeSpot,
   nextStepId,
   toDefinition,
@@ -108,5 +109,36 @@ describe('ancestorsOf', () => {
     const e = edges(['tag', 'push'], ['push', 'jira'], ['push', 'confluence'], ['jira', 'email'])
     expect([...ancestorsOf('email', e)].sort()).toEqual(['jira', 'push', 'tag'])
     expect(ancestorsOf('tag', e).size).toBe(0)
+  })
+})
+
+describe('cleanSettings', () => {
+  it('drops settings left empty or switched off', () => {
+    expect(
+      cleanSettings({
+        timeout: ' ',
+        if: '',
+        retry: { max: 0, delay: '5s' },
+        continueOnError: false,
+      }),
+    ).toEqual({})
+  })
+
+  it('keeps and trims settings in use', () => {
+    expect(
+      cleanSettings({
+        timeout: ' 5m ',
+        if: ' inputs.deploy ',
+        retry: { max: 3, delay: '', backoff: 'fixed' },
+        continueOnError: true,
+        forEach: { items: ' inputs.tickets ', concurrency: 1 },
+      }),
+    ).toEqual({
+      timeout: '5m',
+      if: 'inputs.deploy',
+      retry: { max: 3 },
+      continueOnError: true,
+      forEach: { items: 'inputs.tickets' },
+    })
   })
 })

@@ -25,6 +25,8 @@ type StepCardProps = {
   tone?: StepTone
   /** Shown at the top right in place of the step id, e.g. a status icon. */
   badge?: ReactNode
+  /** Chips for the step's settings (StepTraits). */
+  traits?: ReactNode
   footer?: ReactNode
 }
 
@@ -36,6 +38,7 @@ export function StepCard({
   name,
   tone = 'default',
   badge,
+  traits,
   footer,
 }: StepCardProps) {
   return (
@@ -70,6 +73,7 @@ export function StepCard({
 
       <div className="px-3 py-2.5">
         <p className="truncate font-medium text-fg">{name}</p>
+        {traits && <div className="mt-1.5 empty:hidden">{traits}</div>}
         {footer && <div className="mt-0.5 text-xs">{footer}</div>}
       </div>
     </motion.div>

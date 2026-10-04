@@ -38,7 +38,8 @@ internal/config    flags + CONDUCTOR_* env vars
 internal/workflow  domain types, Repository interface, structural validation
 internal/block     block descriptors (fields, outputs) + executors (RunFunc); builtin registry
 internal/run       run/step/log types and the run Repository interface
-internal/engine    DAG scheduler: parallel steps, cancel, timeouts, batched logs
+internal/engine    DAG scheduler (execute.go), step attempts/loops/approvals
+                   (step.go), batched logs, resuming runs after a restart
 internal/events    in-process broker fanning run events out to SSE streams
 internal/tmpl      {{ expr }} templates: compile, render, reference extraction
 internal/secrets   AES-GCM cipher, keychain key, secret store, output masker
@@ -50,7 +51,8 @@ web/src/
   app/             router
   components/ui    small primitives (Button, Tooltip on Radix)
   components/layout app shell, sidebar, page header
-  components/flow  StepCard: the step visual shared by editor and run graph
+  components/flow  StepCard + StepTraits: the step visual shared by editor and
+                   run graph
   features/<area>  feature folders: pages, hooks, components for one area
     workflows/     list page, query hooks + API types (api.ts)
     blocks/        block descriptors from /api/blocks, icons
@@ -76,7 +78,14 @@ web/src/
   `internal/block`; the UI renders its config form from the field list, no
   frontend change needed. `Run` must honour ctx cancellation.
 - Execution semantics (skip downstream on failure, timeouts, login shell,
-  process groups) are in ADR 0003; keep them in sync when changing the engine.
+  process groups) are in ADR 0003; conditions, retries, continue-on-error,
+  loops and approvals in ADR 0006. Keep them in sync when changing the engine.
+- Per-step settings (`if`, `retry`, `continueOnError`, `forEach`, `timeout`)
+  live on `workflow.Step`, not in block config. The `approval` block has no
+  `RunFunc`; the engine runs it.
+- A run waiting for approval must survive restarts: Shutdown leaves it
+  waiting and `Engine.Recover` resumes it at startup. Anything new that a
+  run holds in memory must be rebuildable from the store.
 - Engine and block tests run with `go test -race`; keep them race-clean.
 - Expressions, inputs and secrets: ADR 0005. Anything a step reads must be
   checked at save time (workflow.Validate) and resolved in the engine just
@@ -129,7 +138,11 @@ web/src/
   values that don't look like real tokens.
 - A single run is kept fresh by `useRunStream` (SSE) writing into the query
   cache, not by polling. Run lists still poll, and TanStack pauses that in
-  hidden tabs.
+  hidden tabs. `EventSource` gives up for good on an HTTP error (a 502 from
+  the Vite proxy while the API restarts), so `useRunStream` reconnects itself.
+- Visually hidden inputs (`sr-only`, e.g. the settings toggles) are absolutely
+  positioned: give their wrapper `relative`, or they escape the scroll
+  container and make the whole page scroll.
 - React Flow only draws edges between nodes that render `<Handle>`s; read-only
   nodes still need (invisible) handles.
 - In a hidden browser pane React Flow can't measure nodes, so they stay
