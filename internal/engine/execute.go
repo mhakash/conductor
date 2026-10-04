@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"conductor/internal/block"
@@ -21,227 +23,406 @@ type stepResult struct {
 	err       string
 	config    json.RawMessage // resolved and masked, as recorded
 	startedAt *time.Time
+	progress  run.Progress
+	// approval marks results of approval steps, which don't count as work
+	// in progress while they wait.
+	approval bool
+	// suspended means Conductor is stopping and the step was left as the
+	// store has it (waiting for approval, or queued) to resume after restart.
+	suspended bool
 }
 
-// execute runs r to completion. Steps start as soon as all their
-// dependencies have succeeded, at most maxParallel at a time. When a step
-// fails, everything downstream of it is skipped; independent branches carry on.
-func (e *Engine) execute(ctx context.Context, r run.Run, secretValues map[string]string) {
-	// Bookkeeping writes must succeed even after ctx is cancelled.
+// outcome is what downstream steps can see of a finished step.
+type outcome struct {
+	status  run.Status
+	outputs map[string]any
+}
+
+// runner executes one run. Its maps are only touched by the goroutine
+// running loop; steps run in their own goroutines and report on results.
+type runner struct {
+	e      *Engine
+	ctx    context.Context // cancelled by Cancel or Shutdown
+	store  context.Context // for bookkeeping writes, which must outlive ctx
+	r      run.Run
+	log    *slog.Logger
+	masker *secrets.Masker
+	sink   *logSink
+	// secretEnv holds decrypted values for expressions; never recorded.
+	secretEnv map[string]any
+
+	steps      map[string]workflow.Step
+	parents    map[string][]string
+	dependents map[string][]string
+	waitingOn  map[string]int
+	done       map[string]outcome
+	started    map[string]bool
+	// stored is the state of each step when a run is resumed; nil otherwise.
+	stored map[string]run.StepRun
+
+	results   chan stepResult
+	slots     chan struct{}
+	inFlight  int             // started steps whose result hasn't arrived
+	waiting   map[string]bool // approval steps among them
+	suspended int             // approvals left waiting by a shutdown
+
+	status    run.Status
+	startedAt time.Time
+}
+
+// execute runs r to completion. Steps start as soon as everything they
+// depend on has finished, at most maxParallel doing work at a time. When a
+// step fails, everything downstream of it is skipped; independent branches
+// carry on. With resuming set, r was loaded from the store after a restart
+// and carries on from where it was left.
+func (e *Engine) execute(ctx context.Context, r run.Run, secretValues map[string]string, resuming bool) {
 	store := context.WithoutCancel(ctx)
 	log := e.log.With("run", r.ID)
 
-	started := e.now()
-	if err := e.runs.StartRun(store, r.ID, started); err != nil {
-		log.Error("start run", "err", err)
-		e.events.End(r.ID)
-		return
+	rn := &runner{
+		e: e, ctx: ctx, store: store, r: r, log: log,
+		secretEnv:  make(map[string]any, len(secretValues)),
+		steps:      make(map[string]workflow.Step, len(r.Definition.Steps)),
+		parents:    map[string][]string{},
+		dependents: map[string][]string{},
+		waitingOn:  make(map[string]int, len(r.Definition.Steps)),
+		done:       make(map[string]outcome, len(r.Definition.Steps)),
+		started:    map[string]bool{},
+		results:    make(chan stepResult),
+		slots:      make(chan struct{}, e.maxParallel),
+		waiting:    map[string]bool{},
+		status:     run.StatusRunning,
 	}
-	e.events.Publish(r.ID, run.Event{Type: run.EventRun, State: &run.State{Status: run.StatusRunning, StartedAt: &started}})
-	log.Info("run started", "workflow", r.WorkflowName, "steps", len(r.Definition.Steps))
-
-	secretEnv := make(map[string]any, len(secretValues))
 	masked := make([]string, 0, len(secretValues))
 	for name, v := range secretValues {
-		secretEnv[name] = v
+		rn.secretEnv[name] = v
 		masked = append(masked, v)
 	}
-	masker := secrets.NewMasker(masked)
-	sink := newLogSink(store, e.runs, e.events, r.ID, masker, log)
-
-	// Outputs of succeeded steps, unmasked, for downstream expressions. Only
-	// this goroutine touches it.
-	outputs := map[string]map[string]any{}
-	exprEnv := func() map[string]any {
-		steps := make(map[string]any, len(outputs))
-		for id, o := range outputs {
-			steps[id] = map[string]any{"outputs": o}
-		}
-		return map[string]any{
-			"steps":    steps,
-			"inputs":   r.Inputs,
-			"secrets":  secretEnv,
-			"run":      map[string]any{"id": r.ID},
-			"workflow": map[string]any{"id": r.WorkflowID, "name": r.WorkflowName},
-		}
-	}
-
-	steps := make(map[string]workflow.Step, len(r.Definition.Steps))
-	waitingOn := make(map[string]int, len(r.Definition.Steps))
-	dependents := make(map[string][]string)
+	rn.masker = secrets.NewMasker(masked)
 	for _, s := range r.Definition.Steps {
-		steps[s.ID] = s
-		waitingOn[s.ID] = 0
+		rn.steps[s.ID] = s
 	}
 	for _, edge := range r.Definition.Edges {
-		waitingOn[edge.To]++
-		dependents[edge.From] = append(dependents[edge.From], edge.To)
+		rn.waitingOn[edge.To]++
+		rn.parents[edge.To] = append(rn.parents[edge.To], edge.From)
+		rn.dependents[edge.From] = append(rn.dependents[edge.From], edge.To)
 	}
 
-	results := make(chan stepResult)
-	slots := make(chan struct{}, e.maxParallel)
-	finished := make(map[string]bool, len(steps))
-	pending := len(steps)
-
-	launch := func(s workflow.Step) {
-		// Built here, not in the goroutine: every ancestor has finished, and
-		// outputs must not be read concurrently with the loop below.
-		env := exprEnv()
-		go func() {
-			select {
-			case slots <- struct{}{}:
-				defer func() { <-slots }()
-			case <-ctx.Done():
-				results <- stepResult{id: s.ID, status: run.StatusCancelled, err: cancelReason(ctx)}
-				return
-			}
-			results <- e.runStep(ctx, store, r.ID, s, sink, env, masker)
-		}()
-	}
-
-	finishStep := func(res stepResult) {
-		recorded := maskJSON(masker, res.outputs)
-		errMsg := masker.Mask(res.err)
-		at := e.now()
-		if err := e.runs.FinishStep(store, r.ID, res.id, res.status, recorded, errMsg, at); err != nil {
-			log.Error("finish step", "step", res.id, "err", err)
+	if resuming {
+		rn.startedAt = *r.StartedAt
+		rn.status = r.Status
+		log.Info("run resumed", "workflow", r.WorkflowName)
+	} else {
+		rn.startedAt = e.now()
+		if err := e.runs.StartRun(store, r.ID, rn.startedAt); err != nil {
+			log.Error("start run", "err", err)
+			e.events.End(r.ID)
+			return
 		}
-		e.events.Publish(r.ID, run.Event{Type: run.EventStep, Step: &run.StepRun{
-			StepID: res.id, Status: res.status, Error: errMsg, Outputs: recorded,
-			Config: res.config, StartedAt: res.startedAt, FinishedAt: &at,
-		}})
+		rn.publishRun(nil, "")
+		log.Info("run started", "workflow", r.WorkflowName, "steps", len(r.Definition.Steps))
 	}
+	rn.sink = newLogSink(store, e.runs, e.events, r.ID, rn.masker, log)
 
-	// closeDownstream marks every not-yet-finished step downstream of id with status.
-	var closeDownstream func(id string, status run.Status, reason string)
-	closeDownstream = func(id string, status run.Status, reason string) {
-		for _, next := range dependents[id] {
-			if finished[next] {
-				continue
+	rn.begin(resuming)
+	rn.loop()
+	rn.finish()
+}
+
+// begin replays the state of a resumed run, then starts every step that is
+// ready.
+func (rn *runner) begin(resuming bool) {
+	if resuming {
+		rn.stored = make(map[string]run.StepRun, len(rn.r.Steps))
+		for _, st := range rn.r.Steps {
+			rn.stored[st.StepID] = st
+			switch {
+			case st.Status.Done():
+				var outputs map[string]any
+				_ = json.Unmarshal(st.Outputs, &outputs)
+				rn.done[st.StepID] = outcome{status: st.Status, outputs: outputs}
+			case st.Status == run.StatusRunning:
+				// The process died mid-step; whatever it was doing is gone.
+				rn.record(stepResult{id: st.StepID, status: run.StatusCancelled,
+					err: "Conductor stopped while this step was running", config: st.Config, startedAt: st.StartedAt})
+				rn.done[st.StepID] = outcome{status: run.StatusCancelled}
 			}
-			finished[next] = true
-			pending--
-			finishStep(stepResult{id: next, status: status, err: reason})
-			closeDownstream(next, status, reason)
 		}
-	}
-
-	for _, s := range r.Definition.Steps {
-		if waitingOn[s.ID] == 0 {
-			launch(s)
+		// Apply finished steps parents-first, as if they had just finished.
+		for _, id := range topoOrder(rn.r.Definition) {
+			if _, ok := rn.done[id]; ok {
+				rn.settle(id)
+			}
 		}
 	}
+	for _, s := range rn.r.Definition.Steps {
+		if rn.waitingOn[s.ID] == 0 && !rn.isDone(s.ID) && !rn.started[s.ID] {
+			rn.ready(s.ID)
+		}
+	}
+	rn.syncStatus()
+}
 
-	failed := false
-	for pending > 0 {
-		res := <-results
-		finished[res.id] = true
-		pending--
-		finishStep(res)
+func (rn *runner) loop() {
+	for rn.inFlight > 0 {
+		res := <-rn.results
+		rn.inFlight--
+		delete(rn.waiting, res.id)
+		if res.suspended {
+			if res.approval {
+				rn.suspended++
+			}
+			continue
+		}
+		rn.complete(res)
+		rn.syncStatus()
+	}
+}
 
-		switch res.status {
-		case run.StatusSucceeded:
-			if res.outputs == nil {
-				res.outputs = map[string]any{}
-			}
-			outputs[res.id] = res.outputs
-			for _, next := range dependents[res.id] {
-				waitingOn[next]--
-				if waitingOn[next] == 0 && !finished[next] {
-					launch(steps[next])
-				}
-			}
-		case run.StatusCancelled:
-			closeDownstream(res.id, run.StatusCancelled, "")
-		default:
-			failed = true
-			closeDownstream(res.id, run.StatusSkipped, fmt.Sprintf("skipped because %q failed", res.id))
+// finish records the run's outcome, unless it is waiting for approval while
+// Conductor stops; then it is left for Recover to resume.
+func (rn *runner) finish() {
+	if rn.suspended > 0 {
+		rn.sink.Close()
+		rn.log.Info("run suspended until Conductor restarts", "waiting", rn.suspended)
+		return
+	}
+
+	// Steps left queued by a shutdown.
+	reason := cancelReason(rn.ctx)
+	for _, s := range rn.r.Definition.Steps {
+		if !rn.isDone(s.ID) {
+			rn.record(stepResult{id: s.ID, status: run.StatusCancelled, err: reason})
+			rn.done[s.ID] = outcome{status: run.StatusCancelled}
 		}
 	}
 
 	status, msg := run.StatusSucceeded, ""
+	failed, cancelled := false, false
+	for id, o := range rn.done {
+		switch {
+		case o.status == run.StatusFailed && !rn.steps[id].ContinueOnError:
+			failed = true
+		case o.status == run.StatusCancelled:
+			cancelled = true
+		}
+	}
 	switch {
-	case ctx.Err() != nil:
-		status, msg = run.StatusCancelled, cancelReason(ctx)
+	case rn.ctx.Err() != nil:
+		status, msg = run.StatusCancelled, reason
 	case failed:
 		status = run.StatusFailed
+	case cancelled:
+		status = run.StatusCancelled
 	}
+
 	// Flush logs first so the stream never ends with lines still unsent.
-	sink.Close()
-	finishedAt := e.now()
-	if err := e.runs.FinishRun(store, r.ID, status, msg, finishedAt); err != nil {
-		log.Error("finish run", "err", err)
+	rn.sink.Close()
+	finishedAt := rn.e.now()
+	if err := rn.e.runs.FinishRun(rn.store, rn.r.ID, status, msg, finishedAt); err != nil {
+		rn.log.Error("finish run", "err", err)
 	}
-	e.events.Publish(r.ID, run.Event{Type: run.EventRun, State: &run.State{
-		Status: status, Error: msg, StartedAt: &started, FinishedAt: &finishedAt,
-	}})
-	e.events.End(r.ID)
-	log.Info("run finished", "status", status)
+	rn.status = status
+	rn.publishRun(&finishedAt, msg)
+	rn.e.events.End(rn.r.ID)
+	rn.log.Info("run finished", "status", status)
 }
 
-func (e *Engine) runStep(ctx, store context.Context, runID string, s workflow.Step, sink *logSink, exprEnv map[string]any, masker *secrets.Masker) stepResult {
-	b, _ := e.blocks.Get(s.Block)
-	timeout := DefaultStepTimeout
-	if s.Timeout != "" {
-		// Validated before the run started.
-		timeout, _ = time.ParseDuration(s.Timeout)
-	}
-	stepCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+// ready is called once everything a step depends on has finished.
+func (rn *runner) ready(id string) {
+	s := rn.steps[id]
+	rn.started[id] = true
 
-	config, renderErr := tmpl.RenderConfig(s.Config, exprEnv)
-	if renderErr != nil {
-		config = s.Config // record what we have; the step fails below
+	if st, ok := rn.stored[id]; ok && st.Status == run.StatusWaiting {
+		rn.await(s, st.Config, *st.StartedAt)
+		return
 	}
-	recorded := maskJSON(masker, config)
-
-	startedAt := e.now()
-	if err := e.runs.StartStep(store, runID, s.ID, recorded, startedAt); err != nil {
-		e.log.Error("start step", "run", runID, "step", s.ID, "err", err)
-	}
-	e.events.Publish(runID, run.Event{Type: run.EventStep, Step: &run.StepRun{
-		StepID: s.ID, Status: run.StatusRunning, Outputs: json.RawMessage("{}"),
-		Config: recorded, StartedAt: &startedAt,
-	}})
-
-	env, flush := sink.envFor(s.ID)
-	if renderErr != nil {
-		msg := "config: " + renderErr.Error()
-		env.Logf("%s", msg)
-		flush()
-		return stepResult{id: s.ID, status: run.StatusFailed, err: msg, config: recorded, startedAt: &startedAt}
-	}
-	outputs, err := safeRun(stepCtx, b.Run, config, env)
-	flush()
-
-	res := stepResult{id: s.ID, status: run.StatusSucceeded, outputs: outputs, config: recorded, startedAt: &startedAt}
-	switch {
-	case err == nil:
-	case ctx.Err() != nil:
-		res.status, res.err = run.StatusCancelled, cancelReason(ctx)
-	case errors.Is(stepCtx.Err(), context.DeadlineExceeded):
-		res.status, res.err = run.StatusFailed, fmt.Sprintf("timed out after %s", timeout)
-	default:
-		res.status, res.err = run.StatusFailed, err.Error()
-	}
-	switch {
-	case res.err != "":
-		env.Logf("%s", res.err)
-	case res.status == run.StatusCancelled:
-		env.Logf("cancelled")
-	}
-	return res
-}
-
-// safeRun turns a panic inside a block into a step failure instead of
-// taking the whole process down.
-func safeRun(ctx context.Context, fn block.RunFunc, config json.RawMessage, env block.Env) (out map[string]any, err error) {
-	defer func() {
-		if p := recover(); p != nil {
-			err = fmt.Errorf("internal error in block: %v", p)
+	if parents := rn.parents[id]; len(parents) > 0 && rn.allSkipped(parents) {
+		reason := "skipped because everything it depends on was skipped"
+		if len(parents) == 1 {
+			reason = fmt.Sprintf("skipped because %q was skipped", parents[0])
 		}
-	}()
-	return fn(ctx, config, env)
+		rn.complete(stepResult{id: id, status: run.StatusSkipped, err: reason})
+		return
+	}
+
+	env := rn.exprEnv()
+	if s.If != "" {
+		ok, err := evalCondition(s.If, env)
+		switch {
+		case err != nil:
+			rn.complete(stepResult{id: id, status: run.StatusFailed, err: "condition: " + rn.masker.Mask(err.Error())})
+			return
+		case !ok:
+			rn.complete(stepResult{id: id, status: run.StatusSkipped, err: "condition is false: " + s.If})
+			return
+		}
+	}
+
+	if s.Block == block.ApprovalType {
+		rn.startApproval(s, env)
+		return
+	}
+	rn.inFlight++
+	go func() { rn.results <- rn.runStep(s, env) }()
+}
+
+// complete records a step's result and moves on to what depends on it.
+func (rn *runner) complete(res stepResult) {
+	rn.record(res)
+	if res.outputs == nil {
+		res.outputs = map[string]any{}
+	}
+	rn.done[res.id] = outcome{status: res.status, outputs: res.outputs}
+	rn.settle(res.id)
+}
+
+// settle applies a finished step to its dependents: they become ready, or
+// are skipped or cancelled along with everything below them.
+func (rn *runner) settle(id string) {
+	o := rn.done[id]
+	switch {
+	case o.status == run.StatusCancelled:
+		rn.closeDownstream(id, run.StatusCancelled, "")
+	case o.status == run.StatusFailed && !rn.steps[id].ContinueOnError:
+		rn.closeDownstream(id, run.StatusSkipped, fmt.Sprintf("skipped because %q failed", id))
+	default:
+		for _, next := range rn.dependents[id] {
+			rn.waitingOn[next]--
+			if rn.waitingOn[next] == 0 && !rn.isDone(next) && !rn.started[next] {
+				rn.ready(next)
+			}
+		}
+	}
+}
+
+// closeDownstream marks every unfinished step downstream of id with status.
+func (rn *runner) closeDownstream(id string, status run.Status, reason string) {
+	for _, next := range rn.dependents[id] {
+		if rn.isDone(next) {
+			continue
+		}
+		rn.record(stepResult{id: next, status: status, err: reason})
+		rn.done[next] = outcome{status: status}
+		rn.closeDownstream(next, status, reason)
+	}
+}
+
+// record stores a step's final state and publishes it.
+func (rn *runner) record(res stepResult) {
+	recorded := maskJSON(rn.masker, res.outputs)
+	errMsg := rn.masker.Mask(res.err)
+	at := rn.e.now()
+	if err := rn.e.runs.FinishStep(rn.store, rn.r.ID, res.id, res.status, recorded, errMsg, at); err != nil {
+		rn.log.Error("finish step", "step", res.id, "err", err)
+	}
+	config := res.config
+	if config == nil {
+		config = json.RawMessage("{}")
+	}
+	rn.e.events.Publish(rn.r.ID, run.Event{Type: run.EventStep, Step: &run.StepRun{
+		StepID: res.id, Status: res.status, Error: errMsg, Outputs: recorded,
+		Config: config, StartedAt: res.startedAt, FinishedAt: &at, Progress: res.progress,
+	}})
+}
+
+// syncStatus shows the run as waiting while approvals are all it has left.
+func (rn *runner) syncStatus() {
+	want := run.StatusRunning
+	if len(rn.waiting) > 0 && len(rn.waiting) == rn.inFlight {
+		want = run.StatusWaiting
+	}
+	if want == rn.status {
+		return
+	}
+	rn.status = want
+	if err := rn.e.runs.SetRunStatus(rn.store, rn.r.ID, want); err != nil {
+		rn.log.Error("set run status", "err", err)
+	}
+	rn.publishRun(nil, "")
+}
+
+func (rn *runner) publishRun(finishedAt *time.Time, msg string) {
+	rn.e.events.Publish(rn.r.ID, run.Event{Type: run.EventRun, State: &run.State{
+		Status: rn.status, Error: msg, StartedAt: &rn.startedAt, FinishedAt: finishedAt,
+	}})
+}
+
+func (rn *runner) isDone(id string) bool {
+	_, ok := rn.done[id]
+	return ok
+}
+
+func (rn *runner) allSkipped(ids []string) bool {
+	for _, id := range ids {
+		if rn.done[id].status != run.StatusSkipped {
+			return false
+		}
+	}
+	return true
+}
+
+// exprEnv builds what expressions can read. Call it from the loop goroutine
+// only; the result is a snapshot that step goroutines may keep.
+func (rn *runner) exprEnv() map[string]any {
+	steps := make(map[string]any, len(rn.done))
+	for id, o := range rn.done {
+		outputs := o.outputs
+		if outputs == nil {
+			outputs = map[string]any{}
+		}
+		steps[id] = map[string]any{"outputs": outputs, "status": string(o.status)}
+	}
+	return map[string]any{
+		"steps":    steps,
+		"inputs":   rn.r.Inputs,
+		"secrets":  rn.secretEnv,
+		"run":      map[string]any{"id": rn.r.ID},
+		"workflow": map[string]any{"id": rn.r.WorkflowID, "name": rn.r.WorkflowName},
+	}
+}
+
+func evalCondition(src string, env map[string]any) (bool, error) {
+	e, err := tmpl.CompileExpr(src)
+	if err != nil {
+		return false, err
+	}
+	v, err := e.Eval(env)
+	if err != nil {
+		return false, err
+	}
+	b, ok := v.(bool)
+	if !ok {
+		return false, fmt.Errorf("must be true or false, but is %s", describe(v))
+	}
+	return b, nil
+}
+
+// topoOrder lists step ids so that every step comes after its parents.
+func topoOrder(def workflow.Definition) []string {
+	indegree := make(map[string]int, len(def.Steps))
+	next := map[string][]string{}
+	for _, e := range def.Edges {
+		indegree[e.To]++
+		next[e.From] = append(next[e.From], e.To)
+	}
+	var queue, order []string
+	for _, s := range def.Steps {
+		if indegree[s.ID] == 0 {
+			queue = append(queue, s.ID)
+		}
+	}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		order = append(order, id)
+		for _, n := range next[id] {
+			if indegree[n]--; indegree[n] == 0 {
+				queue = append(queue, n)
+			}
+		}
+	}
+	return order
 }
 
 // cancelReason explains a cancellation, or returns "" when the user asked
@@ -252,6 +433,27 @@ func cancelReason(ctx context.Context) string {
 		return ""
 	}
 	return cause.Error()
+}
+
+// describe renders a value briefly for log lines and messages.
+func describe(v any) string {
+	if v == nil {
+		return "nothing"
+	}
+	var s string
+	if str, ok := v.(string); ok {
+		s = str
+	} else {
+		data, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%T", v)
+		}
+		s = string(data)
+	}
+	if s = strings.TrimSpace(s); len(s) > 80 {
+		s = s[:77] + "…"
+	}
+	return s
 }
 
 // maskJSON encodes v and masks secrets in it. Masking replaces text inside

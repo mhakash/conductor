@@ -105,3 +105,27 @@ func TestConfigRefs(t *testing.T) {
 		t.Errorf("refs = %v", refs)
 	}
 }
+
+func TestExpr(t *testing.T) {
+	e, err := CompileExpr(`steps.pipeline.outputs.json.status == "success" && !inputs.dryRun`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, err := e.Eval(env); err != nil || v != false {
+		t.Errorf("Eval = %v, %v; want false", v, err)
+	}
+	if got := fmt.Sprint(e.Refs()); got != "[{steps pipeline} {inputs dryRun}]" {
+		t.Errorf("Refs = %s", got)
+	}
+
+	loop, _ := CompileExpr(`"KEY-" + item.id + " #" + string(index)`)
+	if got := fmt.Sprint(loop.Refs()); got != "[{item item} {item index}]" {
+		t.Errorf("loop Refs = %s", got)
+	}
+
+	for _, bad := range []string{"", "  ", "a ==", "{{ a }}"} {
+		if _, err := CompileExpr(bad); err == nil {
+			t.Errorf("CompileExpr(%q) succeeded", bad)
+		}
+	}
+}

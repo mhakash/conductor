@@ -62,14 +62,29 @@ func testBlocks(c *concurrency) *block.Registry {
 		Fields: []block.Field{{Key: "url", Label: "URL", Required: true}},
 		Run:    echo.Run,
 	}
-	// emit returns its config's "value" as an output and logs it.
+	// emit returns its config's "value" as an output and logs it; the value
+	// "bad" fails.
 	emit := block.Block{Type: "emit", Run: func(_ context.Context, cfg json.RawMessage, env block.Env) (map[string]any, error) {
 		var v struct{ Value string }
 		_ = json.Unmarshal(cfg, &v)
 		fmt.Fprintln(env.Stdout, v.Value)
+		if v.Value == "bad" {
+			return nil, errors.New("bad value")
+		}
 		return map[string]any{"value": v.Value}, nil
 	}}
-	return block.NewRegistry(sleep, fail, panicky, echo, needs, emit)
+	// flaky fails its first "fails" attempts.
+	var tries sync.Map
+	flaky := block.Block{Type: "flaky", Run: func(_ context.Context, cfg json.RawMessage, env block.Env) (map[string]any, error) {
+		var v struct{ Fails int }
+		_ = json.Unmarshal(cfg, &v)
+		n, _ := tries.LoadOrStore(string(cfg), new(atomic.Int32))
+		if attempt := n.(*atomic.Int32).Add(1); int(attempt) <= v.Fails {
+			return nil, fmt.Errorf("flake %d", attempt)
+		}
+		return map[string]any{"ok": true}, nil
+	}}
+	return block.NewRegistry(sleep, fail, panicky, echo, needs, emit, flaky, block.Approval)
 }
 
 type fixture struct {
@@ -85,19 +100,25 @@ func newFixture(t *testing.T, maxParallel int) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs := store.NewRuns(db)
-	conc := &concurrency{}
-	e := New(Options{Runs: runs, Blocks: testBlocks(conc), Log: log, MaxParallel: maxParallel,
-		Secrets: fakeSecrets{"TOKEN": "s3cr3t-token"}})
-	t.Cleanup(func() {
-		_ = e.Shutdown(context.Background())
-		db.Close()
-	})
-	return fixture{engine: e, runs: runs, conc: conc}
+	t.Cleanup(func() { db.Close() })
+	f := fixture{runs: store.NewRuns(db), conc: &concurrency{}}
+	f.engine = f.newEngine(t, maxParallel)
+	return f
+}
+
+// newEngine returns another engine on the fixture's database, as if
+// Conductor had restarted.
+func (f fixture) newEngine(t *testing.T, maxParallel int) *Engine {
+	e := New(Options{Runs: f.runs, Blocks: testBlocks(f.conc), Log: slog.New(slog.DiscardHandler),
+		MaxParallel: maxParallel, Secrets: fakeSecrets{"TOKEN": "s3cr3t-token"}})
+	t.Cleanup(func() { _ = e.Shutdown(context.Background()) })
+	return e
 }
 
 type stepSpec struct {
 	id, block, config, timeout string
+	// edit adjusts the step's settings.
+	edit func(*workflow.Step)
 }
 
 func build(steps []stepSpec, edges ...string) workflow.Workflow {
@@ -107,7 +128,11 @@ func build(steps []stepSpec, edges ...string) workflow.Workflow {
 		if cfg == "" {
 			cfg = "{}"
 		}
-		def.Steps = append(def.Steps, workflow.Step{ID: s.id, Block: s.block, Config: json.RawMessage(cfg), Timeout: s.timeout})
+		st := workflow.Step{ID: s.id, Block: s.block, Config: json.RawMessage(cfg), Timeout: s.timeout}
+		if s.edit != nil {
+			s.edit(&st)
+		}
+		def.Steps = append(def.Steps, st)
 	}
 	for _, e := range edges {
 		from, to, _ := strings.Cut(e, ">")
@@ -128,18 +153,24 @@ func (f fixture) runToEnd(t *testing.T, wf workflow.Workflow) (run.Run, time.Dur
 
 func (f fixture) waitDone(t *testing.T, id string) run.Run {
 	t.Helper()
+	return f.waitFor(t, id, func(r run.Run) bool { return r.Status.Done() })
+}
+
+func (f fixture) waitFor(t *testing.T, id string, cond func(run.Run) bool) run.Run {
+	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
+	var r run.Run
 	for time.Now().Before(deadline) {
-		r, err := f.runs.Get(context.Background(), id)
-		if err != nil {
+		var err error
+		if r, err = f.runs.Get(context.Background(), id); err != nil {
 			t.Fatal(err)
 		}
-		if r.Status.Done() {
+		if cond(r) {
 			return r
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("run did not finish")
+	t.Fatalf("run never reached the expected state; it is %s with steps %v", r.Status, statuses(r))
 	return run.Run{}
 }
 

@@ -6,7 +6,8 @@ Status: accepted (2026-10-04)
 
 A run executes its steps as a DAG in-process, in one goroutine per run:
 
-- A step starts when **all** of its dependencies have **succeeded**.
+- A step starts when **all** of its dependencies have **finished** without
+  failing (see ADR 0006 for skipped dependencies and continue-on-error).
 - Ready steps run concurrently, capped per run by `--max-parallel`
   (`CONDUCTOR_MAX_PARALLEL`, default 8).
 - When a step fails, every step downstream of it is **skipped**; branches that
@@ -16,10 +17,10 @@ A run executes its steps as a DAG in-process, in one goroutine per run:
   reason recorded.
 - Each step has a timeout (default 1 hour, overridable per step as a Go
   duration such as `30s` or `10m`).
-- Runs left `queued`/`running` by a crash are marked `failed` on startup.
+- Runs left `queued`/`running` by a crash are marked `failed` on startup,
+  except runs waiting for approval, which resume (ADR 0006).
 
-Continue-on-error, retries and conditional branches change these rules in
-phase 5; they will be per-step settings, like the timeout.
+Conditions, retries, continue-on-error, loops and approvals are in ADR 0006.
 
 ## Runs are snapshots
 

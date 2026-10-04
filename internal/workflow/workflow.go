@@ -40,6 +40,59 @@ type Step struct {
 	Position Position        `json:"position"`
 	// Timeout is a Go duration ("30s", "10m"). Empty means the engine default.
 	Timeout string `json:"timeout,omitempty"`
+	// If is an expression (without {{ }}); the step is skipped unless it is true.
+	If    string `json:"if,omitempty"`
+	Retry *Retry `json:"retry,omitempty"`
+	// ContinueOnError lets downstream steps run, and the run succeed, even
+	// if this step fails.
+	ContinueOnError bool     `json:"continueOnError,omitempty"`
+	ForEach         *ForEach `json:"forEach,omitempty"`
+}
+
+// Retry runs a failed step again, up to Max more times.
+type Retry struct {
+	Max int `json:"max"`
+	// Delay is the wait before the first retry (Go duration); default 10s.
+	Delay string `json:"delay,omitempty"`
+	// Backoff is "fixed" (default) or "exponential", which doubles the delay
+	// after every attempt.
+	Backoff string `json:"backoff,omitempty"`
+}
+
+const (
+	BackoffFixed       = "fixed"
+	BackoffExponential = "exponential"
+	DefaultRetryDelay  = 10 * time.Second
+	MaxRetries         = 20
+	MaxRetryDelay      = time.Hour
+)
+
+// ForEach runs the step once per element of a list. The step's config can
+// read the element as `item` and its position as `index`.
+type ForEach struct {
+	// Items is an expression (without {{ }}) that evaluates to a list.
+	Items string `json:"items"`
+	// Concurrency is how many items run at the same time; default 1.
+	Concurrency int `json:"concurrency,omitempty"`
+}
+
+const (
+	MaxForEachConcurrency = 32
+	MaxForEachItems       = 1000
+)
+
+// DelayBefore returns the wait before retry number n (1-based).
+func (r Retry) DelayBefore(n int) time.Duration {
+	d := DefaultRetryDelay
+	if r.Delay != "" {
+		d, _ = time.ParseDuration(r.Delay) // validated on save
+	}
+	if r.Backoff == BackoffExponential {
+		for i := 1; i < n && d < MaxRetryDelay; i++ {
+			d *= 2
+		}
+	}
+	return min(d, MaxRetryDelay)
 }
 
 type Position struct {

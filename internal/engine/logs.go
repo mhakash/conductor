@@ -66,13 +66,13 @@ func (s *logSink) loop() {
 	}
 }
 
-func (s *logSink) add(stepID string, stream run.Stream, text string) {
+func (s *logSink) add(stepID string, item *int, stream run.Stream, text string) {
 	text = s.masker.Mask(text)
 	if len(text) > maxLineLength {
 		text = text[:maxLineLength] + " … (line truncated)"
 	}
 	s.mu.Lock()
-	s.batch = append(s.batch, run.LogLine{StepID: stepID, Stream: stream, Text: text, Time: time.Now().UTC()})
+	s.batch = append(s.batch, run.LogLine{StepID: stepID, Item: item, Stream: stream, Text: text, Time: time.Now().UTC()})
 	full := len(s.batch) >= flushAtLines
 	s.mu.Unlock()
 	if full {
@@ -102,16 +102,17 @@ func (s *logSink) Close() {
 	<-s.done
 }
 
-// envFor returns the block.Env for one step. Call flush when the step ends so
-// a final line without a trailing newline isn't lost.
-func (s *logSink) envFor(stepID string) (block.Env, func()) {
-	stdout := &lineWriter{emit: func(l string) { s.add(stepID, run.StreamStdout, l) }}
-	stderr := &lineWriter{emit: func(l string) { s.add(stepID, run.StreamStderr, l) }}
+// envFor returns the block.Env for one step, or one item of a step that
+// runs once per item (item is nil otherwise). Call flush when it ends so a
+// final line without a trailing newline isn't lost.
+func (s *logSink) envFor(stepID string, item *int) (block.Env, func()) {
+	stdout := &lineWriter{emit: func(l string) { s.add(stepID, item, run.StreamStdout, l) }}
+	stderr := &lineWriter{emit: func(l string) { s.add(stepID, item, run.StreamStderr, l) }}
 	env := block.Env{
 		Stdout: stdout,
 		Stderr: stderr,
 		Logf: func(format string, args ...any) {
-			s.add(stepID, run.StreamSystem, fmt.Sprintf(format, args...))
+			s.add(stepID, item, run.StreamSystem, fmt.Sprintf(format, args...))
 		},
 	}
 	return env, func() {

@@ -100,6 +100,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/{id}/logs", s.handleRunLogs)
 			r.Get("/{id}/events", s.handleRunEvents)
 			r.Post("/{id}/cancel", s.handleCancelRun)
+			r.Post("/{id}/steps/{step}/decision", s.handleDecision)
 		})
 		r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 			writeError(w, http.StatusNotFound, "no such endpoint")

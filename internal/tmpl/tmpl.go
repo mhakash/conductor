@@ -4,8 +4,9 @@
 //	"git tag -a {{ inputs.version }} -m {{ 'Release ' + inputs.version }}"
 //	"{{ steps.pipeline.outputs.json.status }}"
 //
-// Expressions see `steps.<id>.outputs`, `inputs`, `secrets`, `run` and
-// `workflow`. A rendered value that is a string is inserted as is; anything
+// Expressions see `steps.<id>.outputs` and `steps.<id>.status`, `inputs`,
+// `secrets`, `run` and `workflow`; steps that run once per item also see
+// `item` and `index`. A rendered value that is a string is inserted as is; anything
 // else (numbers, objects) is inserted as JSON.
 package tmpl
 
@@ -27,7 +28,8 @@ const (
 )
 
 // Ref is a reference to something an expression reads: Kind is "steps",
-// "inputs" or "secrets"; Name is the step id, input or secret name.
+// "inputs" or "secrets" with Name the step id, input or secret name, or
+// "item" (Name "item" or "index") for the current element of a loop.
 type Ref struct {
 	Kind string
 	Name string
@@ -74,17 +76,47 @@ func Compile(s string) (*Template, error) {
 			return nil, errors.New("empty expression {{ }}")
 		}
 
-		tree, err := parser.Parse(src)
+		e, err := CompileExpr(src)
 		if err != nil {
-			return nil, fmt.Errorf("in {{ %s }}: %s", src, firstLine(err.Error()))
+			return nil, fmt.Errorf("in {{ %s }}: %w", src, err)
 		}
-		program, err := expr.Compile(src)
-		if err != nil {
-			return nil, fmt.Errorf("in {{ %s }}: %s", src, firstLine(err.Error()))
-		}
-		t.parts = append(t.parts, part{source: src, program: program, refs: refsOf(tree.Node)})
+		t.parts = append(t.parts, part{source: src, program: e.program, refs: e.refs})
 	}
 }
+
+// Expr is a single expression written without {{ }}, such as a step's
+// condition or the list a step loops over.
+type Expr struct {
+	source  string
+	program *vm.Program
+	refs    []Ref
+}
+
+func CompileExpr(src string) (*Expr, error) {
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return nil, errors.New("expression is empty")
+	}
+	tree, err := parser.Parse(src)
+	if err != nil {
+		return nil, errors.New(firstLine(err.Error()))
+	}
+	program, err := expr.Compile(src)
+	if err != nil {
+		return nil, errors.New(firstLine(err.Error()))
+	}
+	return &Expr{source: src, program: program, refs: refsOf(tree.Node)}, nil
+}
+
+func (e *Expr) Eval(env map[string]any) (any, error) {
+	v, err := expr.Run(e.program, env)
+	if err != nil {
+		return nil, errors.New(firstLine(err.Error()))
+	}
+	return v, nil
+}
+
+func (e *Expr) Refs() []Ref { return e.refs }
 
 // Render evaluates every expression against env and joins the result.
 func (t *Template) Render(env map[string]any) (string, error) {
@@ -133,7 +165,7 @@ func stringify(v any) (string, error) {
 }
 
 // refsOf finds member accesses rooted at steps/inputs/secrets, such as
-// steps.tag or inputs["version"].
+// steps.tag or inputs["version"], and uses of item and index.
 func refsOf(node ast.Node) []Ref {
 	v := &refVisitor{}
 	ast.Walk(&node, v)
@@ -143,6 +175,10 @@ func refsOf(node ast.Node) []Ref {
 type refVisitor struct{ refs []Ref }
 
 func (v *refVisitor) Visit(node *ast.Node) {
+	if id, ok := (*node).(*ast.IdentifierNode); ok && (id.Value == "item" || id.Value == "index") {
+		v.refs = append(v.refs, Ref{Kind: "item", Name: id.Value})
+		return
+	}
 	m, ok := (*node).(*ast.MemberNode)
 	if !ok {
 		return

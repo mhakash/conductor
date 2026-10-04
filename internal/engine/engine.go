@@ -21,7 +21,12 @@ import (
 // DefaultStepTimeout applies to steps that don't set their own.
 const DefaultStepTimeout = time.Hour
 
-var ErrNotActive = errors.New("run is not active")
+var (
+	ErrNotActive = errors.New("run is not active")
+	// ErrNotWaiting means a decision was sent for a step that isn't waiting
+	// for one (any more).
+	ErrNotWaiting = errors.New("step is not waiting for approval")
+)
 
 // errShutdown is the cancellation cause when Conductor itself is stopping.
 var errShutdown = errors.New("Conductor was stopped while this run was in progress")
@@ -52,8 +57,16 @@ type Engine struct {
 
 	mu     sync.Mutex
 	active map[string]context.CancelCauseFunc
-	wg     sync.WaitGroup
-	closed bool
+	// approvals delivers decisions to waiting approval steps, by approvalKey.
+	approvals map[string]chan Decision
+	wg        sync.WaitGroup
+	closed    bool
+}
+
+// Decision is someone's answer to an approval step.
+type Decision struct {
+	Approve bool   `json:"approve"`
+	Comment string `json:"comment"`
 }
 
 func New(o Options) *Engine {
@@ -72,6 +85,7 @@ func New(o Options) *Engine {
 		maxParallel: o.MaxParallel,
 		now:         func() time.Time { return time.Now().UTC() },
 		active:      map[string]context.CancelCauseFunc{},
+		approvals:   map[string]chan Decision{},
 	}
 }
 
@@ -112,7 +126,12 @@ func (e *Engine) Start(ctx context.Context, wf workflow.Workflow, inputs map[str
 	if err != nil {
 		return run.Run{}, err
 	}
+	e.spawn(r, secretValues, false)
+	return r, nil
+}
 
+// spawn executes r in the background. Call with e.mu held.
+func (e *Engine) spawn(r run.Run, secretValues map[string]string, resuming bool) {
 	// The run outlives the HTTP request that started it.
 	runCtx, cancel := context.WithCancelCause(context.Background())
 	e.active[r.ID] = cancel
@@ -125,10 +144,90 @@ func (e *Engine) Start(ctx context.Context, wf workflow.Workflow, inputs map[str
 			e.mu.Unlock()
 			cancel(nil)
 		}()
-		e.execute(runCtx, r, secretValues)
+		e.execute(runCtx, r, secretValues, resuming)
 	}()
-	return r, nil
 }
+
+// Recover deals with runs a previous process left unfinished: those waiting
+// for approval carry on where they were, the rest are marked failed. Call it
+// once at startup, before starting new runs.
+func (e *Engine) Recover(ctx context.Context) error {
+	n, err := e.runs.FailUnfinished(ctx, "Conductor stopped while this run was in progress", e.now())
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		e.log.Warn("marked interrupted runs as failed", "count", n)
+	}
+	ids, err := e.runs.Unfinished(ctx)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		r, err := e.runs.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		secretValues, err := e.loadSecrets(ctx, r.Definition)
+		if err != nil {
+			e.abandon(ctx, r, "Couldn't resume after a restart: "+err.Error())
+			continue
+		}
+		e.mu.Lock()
+		e.spawn(r, secretValues, true)
+		e.mu.Unlock()
+	}
+	if len(ids) > 0 {
+		e.log.Info("resumed runs waiting for approval", "count", len(ids))
+	}
+	return nil
+}
+
+// abandon fails a run that can't be resumed, with its unfinished steps.
+func (e *Engine) abandon(ctx context.Context, r run.Run, msg string) {
+	at := e.now()
+	for _, st := range r.Steps {
+		if !st.Status.Done() {
+			_ = e.runs.FinishStep(ctx, r.ID, st.StepID, run.StatusFailed, nil, msg, at)
+		}
+	}
+	if err := e.runs.FinishRun(ctx, r.ID, run.StatusFailed, msg, at); err != nil {
+		e.log.Error("abandon run", "run", r.ID, "err", err)
+	}
+}
+
+// Decide approves or rejects an approval step that is waiting.
+func (e *Engine) Decide(runID, stepID string, d Decision) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if _, ok := e.active[runID]; !ok {
+		return ErrNotActive
+	}
+	key := approvalKey(runID, stepID)
+	decisions, ok := e.approvals[key]
+	if !ok {
+		return ErrNotWaiting
+	}
+	delete(e.approvals, key) // a second click gets ErrNotWaiting
+	decisions <- d           // buffered; the step reads it
+	return nil
+}
+
+func (e *Engine) addApproval(runID, stepID string) <-chan Decision {
+	ch := make(chan Decision, 1)
+	e.mu.Lock()
+	e.approvals[approvalKey(runID, stepID)] = ch
+	e.mu.Unlock()
+	return ch
+}
+
+func (e *Engine) removeApproval(runID, stepID string) {
+	e.mu.Lock()
+	delete(e.approvals, approvalKey(runID, stepID))
+	e.mu.Unlock()
+}
+
+func approvalKey(runID, stepID string) string { return runID + "/" + stepID }
 
 // loadSecrets decrypts every secret the workflow's expressions reference.
 // Missing ones are reported against the steps that use them.
@@ -136,8 +235,7 @@ func (e *Engine) loadSecrets(ctx context.Context, def workflow.Definition) (map[
 	users := map[string][]string{} // secret name → step ids
 	var names []string
 	for _, s := range def.Steps {
-		refs, _ := tmpl.ConfigRefs(s.Config) // compiled successfully during Check
-		for _, r := range refs {
+		for _, r := range stepRefs(s) {
 			if r.Kind == "secrets" {
 				if users[r.Name] == nil {
 					names = append(names, r.Name)
@@ -170,6 +268,28 @@ func (e *Engine) loadSecrets(ctx context.Context, def workflow.Definition) (map[
 	return values, err
 }
 
+// stepRefs lists what a step's config, condition and list of items read.
+// The step must have passed validation.
+func stepRefs(s workflow.Step) []tmpl.Ref {
+	refs, _ := tmpl.ConfigRefs(s.Config)
+	for _, src := range []string{s.If, forEachItems(s)} {
+		if src == "" {
+			continue
+		}
+		if e, err := tmpl.CompileExpr(src); err == nil {
+			refs = append(refs, e.Refs()...)
+		}
+	}
+	return refs
+}
+
+func forEachItems(s workflow.Step) string {
+	if s.ForEach == nil {
+		return ""
+	}
+	return s.ForEach.Items
+}
+
 // Cancel stops a running run. Running steps are interrupted; steps that
 // haven't started are marked cancelled.
 func (e *Engine) Cancel(id string) error {
@@ -184,7 +304,8 @@ func (e *Engine) Cancel(id string) error {
 }
 
 // Shutdown cancels all active runs and waits for them to record their final
-// state, or for ctx to expire.
+// state, or for ctx to expire. Runs waiting for approval are left waiting,
+// for Recover to resume on the next start.
 func (e *Engine) Shutdown(ctx context.Context) error {
 	e.mu.Lock()
 	e.closed = true
@@ -228,7 +349,10 @@ func (e *Engine) Check(wf workflow.Workflow) error {
 				Message: fmt.Sprintf("step %q needs %s", s.ID, strings.Join(missing, ", ")),
 			})
 		}
-		if b.Run == nil {
+		switch {
+		case s.Block == block.ApprovalType && (s.Retry != nil || s.ForEach != nil):
+			problems = append(problems, workflow.Problem{Step: s.ID, Message: fmt.Sprintf("step %q: approval steps can't retry or run once per item", s.ID)})
+		case s.Block != block.ApprovalType && b.Run == nil:
 			problems = append(problems, workflow.Problem{Step: s.ID, Message: fmt.Sprintf("block %q can't run yet", s.Block)})
 		}
 	}

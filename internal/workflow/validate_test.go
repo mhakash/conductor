@@ -108,6 +108,51 @@ func TestValidate(t *testing.T) {
 			wantErr: `input name "1st"`,
 		},
 		{
+			name: "condition and loop read ancestors; config reads item",
+			w: withStep(withConfig(wf([]string{"check", "update"}, Edge{"check", "update"}),
+				"update", `{"command":"jira {{ item.key }} {{ index }}"}`), "update", func(s *Step) {
+				s.If = `steps.check.status == "succeeded"`
+				s.ForEach = &ForEach{Items: "steps.check.outputs.json.issues", Concurrency: 4}
+				s.Retry = &Retry{Max: 3, Delay: "30s", Backoff: BackoffExponential}
+			}),
+		},
+		{
+			name: "condition reads a step that doesn't run first",
+			w: withStep(wf([]string{"check", "deploy"}), "deploy", func(s *Step) {
+				s.If = `steps.check.outputs.ok`
+			}),
+			wantErr: `uses outputs of "check" but doesn't run after it`,
+		},
+		{
+			name:    "condition syntax error",
+			w:       withStep(wf([]string{"deploy"}), "deploy", func(s *Step) { s.If = "inputs.env ==" }),
+			wantErr: `step "deploy" condition:`,
+		},
+		{
+			name:    "item outside a loop",
+			w:       withConfig(wf([]string{"update"}), "update", `{"command":"echo {{ item }}"}`),
+			wantErr: "only exists in steps that run once per item",
+		},
+		{
+			name: "loop list reads item",
+			w: withStep(wf([]string{"update"}), "update", func(s *Step) {
+				s.ForEach = &ForEach{Items: "item.children"}
+			}),
+			wantErr: "the item only exists while the step runs",
+		},
+		{
+			name:    "loop without a list",
+			w:       withStep(wf([]string{"update"}), "update", func(s *Step) { s.ForEach = &ForEach{} }),
+			wantErr: "choose the list",
+		},
+		{
+			name: "bad retry settings",
+			w: withStep(wf([]string{"poll"}), "poll", func(s *Step) {
+				s.Retry = &Retry{Max: 0, Delay: "often", Backoff: "random"}
+			}),
+			wantErr: `retries must be between 1 and 20; step "poll": retry delay "often"`,
+		},
+		{
 			name:    "cycle",
 			w:       wf([]string{"a", "b", "c"}, Edge{"a", "b"}, Edge{"b", "c"}, Edge{"c", "a"}),
 			wantErr: "steps form a cycle: a → b → c → a",
@@ -136,6 +181,15 @@ func TestValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func withStep(w Workflow, step string, edit func(*Step)) Workflow {
+	for i := range w.Definition.Steps {
+		if w.Definition.Steps[i].ID == step {
+			edit(&w.Definition.Steps[i])
+		}
+	}
+	return w
 }
 
 func withConfig(w Workflow, step, config string, inputs ...Input) Workflow {
@@ -168,6 +222,26 @@ func TestResolveInputs(t *testing.T) {
 	for _, want := range []string{`"version" is required`, `"many" is not a number`, `no input called "extra"`} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q missing %q", msg, want)
+		}
+	}
+}
+
+func TestRetryDelay(t *testing.T) {
+	fixed := Retry{Max: 3, Delay: "5s"}
+	exp := Retry{Max: 30, Delay: "20m", Backoff: BackoffExponential}
+	for _, tt := range []struct {
+		r    Retry
+		n    int
+		want string
+	}{
+		{Retry{Max: 1}, 1, "10s"},
+		{fixed, 3, "5s"},
+		{exp, 1, "20m0s"},
+		{exp, 2, "40m0s"},
+		{exp, 3, "1h0m0s"}, // capped
+	} {
+		if got := tt.r.DelayBefore(tt.n).String(); got != tt.want {
+			t.Errorf("%+v.DelayBefore(%d) = %s, want %s", tt.r, tt.n, got, tt.want)
 		}
 	}
 }

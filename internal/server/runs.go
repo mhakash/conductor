@@ -35,6 +35,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	list, err := s.runs.List(r.Context(), run.ListFilter{
 		WorkflowID: r.URL.Query().Get("workflowId"),
+		Status:     run.Status(r.URL.Query().Get("status")),
 		Limit:      limit,
 	})
 	if err != nil {
@@ -73,12 +74,27 @@ func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// handleDecision approves or rejects an approval step that is waiting.
+func (s *Server) handleDecision(w http.ResponseWriter, r *http.Request) {
+	var d engine.Decision
+	if !decodeJSON(w, r, &d) {
+		return
+	}
+	if err := s.engine.Decide(chi.URLParam(r, "id"), chi.URLParam(r, "step"), d); err != nil {
+		s.runError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
 func (s *Server) runError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, run.ErrNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, engine.ErrNotActive):
 		writeError(w, http.StatusConflict, "This run has already finished.")
+	case errors.Is(err, engine.ErrNotWaiting):
+		writeError(w, http.StatusConflict, "This step isn't waiting for approval; it may already have been decided.")
 	default:
 		s.internalError(w, r, err)
 	}

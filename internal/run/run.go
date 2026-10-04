@@ -18,7 +18,11 @@ const (
 	StatusSucceeded Status = "succeeded"
 	StatusFailed    Status = "failed"
 	StatusCancelled Status = "cancelled"
-	// StatusSkipped marks steps that never ran because a dependency failed.
+	// StatusWaiting marks an approval step waiting for a decision, and a run
+	// with nothing left to do until one is made.
+	StatusWaiting Status = "waiting"
+	// StatusSkipped marks steps that never ran: a dependency failed, their
+	// condition was false, or everything they depend on was skipped.
 	StatusSkipped Status = "skipped"
 )
 
@@ -53,10 +57,21 @@ type StepRun struct {
 	Status  Status          `json:"status"`
 	Error   string          `json:"error,omitempty"`
 	Outputs json.RawMessage `json:"outputs"`
-	// Config is the step's config with expressions evaluated and secrets masked.
+	// Config is the step's config with expressions evaluated and secrets
+	// masked; for a step that runs once per item, a list with one per item.
 	Config     json.RawMessage `json:"config"`
 	StartedAt  *time.Time      `json:"startedAt"`
 	FinishedAt *time.Time      `json:"finishedAt"`
+	Progress
+}
+
+// Progress is how far a running step has got.
+type Progress struct {
+	// Attempt counts tries of a step that retries; 0 until it starts.
+	Attempt int `json:"attempt,omitempty"`
+	// Items and ItemsDone count the elements of a step that runs once per item.
+	Items     int `json:"items,omitempty"`
+	ItemsDone int `json:"itemsDone,omitempty"`
 }
 
 // Summary is a run without its definition and steps, for listings.
@@ -88,10 +103,13 @@ type LogLine struct {
 	Stream Stream    `json:"stream"`
 	Text   string    `json:"text"`
 	Time   time.Time `json:"time"`
+	// Item is the loop index for lines from a step that runs once per item.
+	Item *int `json:"item,omitempty"`
 }
 
 type ListFilter struct {
 	WorkflowID string
+	Status     Status
 	Limit      int
 }
 
@@ -104,8 +122,12 @@ type Repository interface {
 	List(ctx context.Context, f ListFilter) ([]Summary, error)
 
 	StartRun(ctx context.Context, id string, at time.Time) error
+	// SetRunStatus switches an unfinished run between running and waiting.
+	SetRunStatus(ctx context.Context, id string, status Status) error
 	FinishRun(ctx context.Context, id string, status Status, errMsg string, at time.Time) error
-	StartStep(ctx context.Context, runID, stepID string, config json.RawMessage, at time.Time) error
+	// StartStep records that a step began (running, or waiting for approval).
+	StartStep(ctx context.Context, runID, stepID string, status Status, config json.RawMessage, at time.Time) error
+	UpdateStep(ctx context.Context, runID, stepID string, p Progress) error
 	FinishStep(ctx context.Context, runID, stepID string, status Status, outputs json.RawMessage, errMsg string, at time.Time) error
 
 	// AppendLogs stores lines and returns them with their Seq assigned.
@@ -113,9 +135,13 @@ type Repository interface {
 	// Logs returns lines with Seq > after, oldest first. stepID "" means all steps.
 	Logs(ctx context.Context, runID, stepID string, after int64, limit int) ([]LogLine, error)
 
-	// FailUnfinished marks runs and steps left queued or running (e.g. by a
-	// crash) as failed with msg. It returns how many runs it touched.
+	// FailUnfinished marks runs left unfinished (e.g. by a crash) as failed
+	// with msg, along with their unfinished steps. Runs with a step waiting
+	// for approval are left alone, to be resumed. It returns how many runs it
+	// failed.
 	FailUnfinished(ctx context.Context, msg string, at time.Time) (int, error)
+	// Unfinished lists the ids of runs that haven't finished, oldest first.
+	Unfinished(ctx context.Context) ([]string, error)
 }
 
 // EventType names a change to a run, streamed to clients as it happens.

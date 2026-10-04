@@ -52,11 +52,6 @@ func run() error {
 	defer db.Close()
 
 	runs := store.NewRuns(db)
-	if n, err := runs.FailUnfinished(ctx, "Conductor stopped while this run was in progress", time.Now().UTC()); err != nil {
-		return err
-	} else if n > 0 {
-		log.Warn("marked interrupted runs as failed", "count", n)
-	}
 
 	key, err := secrets.LoadKey(cfg.DataDir, log)
 	if err != nil {
@@ -78,6 +73,9 @@ func run() error {
 		Log:         log,
 		MaxParallel: cfg.MaxParallel,
 	})
+	if err := eng.Recover(ctx); err != nil {
+		return err
+	}
 
 	ui := web.UI()
 	if cfg.Dev {

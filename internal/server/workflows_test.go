@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -179,6 +180,52 @@ func TestRunWorkflow(t *testing.T) {
 
 	if code := do(t, "POST", base+"/runs/"+started.ID+"/cancel", nil, nil); code != http.StatusConflict {
 		t.Errorf("cancel finished run: status %d, want 409", code)
+	}
+}
+
+func TestApprovalDecision(t *testing.T) {
+	srv := newTestServer(t)
+	base := srv.URL + "/api"
+
+	def := workflow.EmptyDefinition()
+	def.Steps = []workflow.Step{
+		{ID: "approve", Block: "approval", Config: json.RawMessage(`{"message":"Go?"}`)},
+		{ID: "after", Block: "shell", Config: json.RawMessage(`{"command":"echo done","shell":"sh"}`)},
+	}
+	def.Edges = []workflow.Edge{{From: "approve", To: "after"}}
+	var wf workflow.Workflow
+	do(t, "POST", base+"/workflows", map[string]any{"name": "Gate", "definition": def}, &wf)
+	var started run.Run
+	do(t, "POST", base+"/workflows/"+wf.ID+"/runs", nil, &started)
+
+	var waiting []run.Summary
+	deadline := time.Now().Add(10 * time.Second)
+	for len(waiting) == 0 && time.Now().Before(deadline) {
+		do(t, "GET", base+"/runs?status=waiting", nil, &waiting)
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(waiting) != 1 || waiting[0].ID != started.ID {
+		t.Fatalf("waiting runs = %+v", waiting)
+	}
+
+	decision := base + "/runs/" + started.ID + "/steps/%s/decision"
+	if code := do(t, "POST", fmt.Sprintf(decision, "after"), map[string]any{"approve": true}, nil); code != http.StatusConflict {
+		t.Errorf("deciding a step that isn't waiting: status %d, want 409", code)
+	}
+	if code := do(t, "POST", fmt.Sprintf(decision, "approve"), map[string]any{"approve": true, "comment": "go"}, nil); code != http.StatusAccepted {
+		t.Fatalf("approve: status %d", code)
+	}
+
+	var got run.Run
+	for time.Now().Before(deadline) {
+		do(t, "GET", base+"/runs/"+started.ID, nil, &got)
+		if got.Status.Done() {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got.Status != run.StatusSucceeded || string(got.Steps[0].Outputs) != `{"approved":true,"comment":"go"}` {
+		t.Errorf("run = %s, approval outputs %s", got.Status, got.Steps[0].Outputs)
 	}
 }
 

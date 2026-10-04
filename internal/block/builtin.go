@@ -2,7 +2,30 @@ package block
 
 // Builtin returns the blocks that ship with Conductor.
 func Builtin() *Registry {
-	return NewRegistry(Shell, HTTP)
+	return NewRegistry(Shell, HTTP, Approval)
+}
+
+// ApprovalType is the block the engine runs itself: it doesn't do work, it
+// pauses the run until someone decides on the run page.
+const ApprovalType = "approval"
+
+var Approval = Block{
+	Type:        ApprovalType,
+	Name:        "Approval",
+	Description: "Pause the run until you approve or reject it on the run page. Rejecting fails the step.",
+	Category:    "Control",
+	Icon:        "hand",
+	Fields: []Field{
+		{
+			Key: "message", Label: "Message", Type: FieldTextarea,
+			Placeholder: "Push {{ inputs.version }} to GitLab?",
+			Help:        "Shown on the run page while it waits. Without a timeout it waits indefinitely, even if Conductor restarts.",
+		},
+	},
+	Outputs: []Output{
+		{Key: "approved", Description: "true if approved"},
+		{Key: "comment", Description: "Comment left with the decision"},
+	},
 }
 
 var Shell = Block{

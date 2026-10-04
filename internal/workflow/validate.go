@@ -73,6 +73,7 @@ func Validate(w Workflow, blockExists func(string) bool) error {
 				add(Problem{Step: s.ID, Message: fmt.Sprintf("step %q has an invalid timeout %q; use a duration like 30s, 5m or 1h", s.ID, s.Timeout)})
 			}
 		}
+		problems = append(problems, validateSettings(s)...)
 	}
 
 	seen := make(map[Edge]bool, len(def.Edges))
@@ -105,6 +106,39 @@ func Validate(w Workflow, blockExists func(string) bool) error {
 		return &ValidationError{Problems: problems}
 	}
 	return nil
+}
+
+// validateSettings checks a step's retry and loop settings. Its condition
+// and loop list are expressions, checked with the others.
+func validateSettings(s Step) []Problem {
+	var problems []Problem
+	add := func(format string, args ...any) {
+		problems = append(problems, Problem{Step: s.ID, Message: fmt.Sprintf("step %q: ", s.ID) + fmt.Sprintf(format, args...)})
+	}
+	if r := s.Retry; r != nil {
+		if r.Max < 1 || r.Max > MaxRetries {
+			add("retries must be between 1 and %d", MaxRetries)
+		}
+		if r.Delay != "" {
+			if d, err := time.ParseDuration(r.Delay); err != nil || d <= 0 || d > MaxRetryDelay {
+				add("retry delay %q must be a duration up to %s, like 10s or 2m", r.Delay, MaxRetryDelay)
+			}
+		}
+		switch r.Backoff {
+		case "", BackoffFixed, BackoffExponential:
+		default:
+			add("retry backoff must be %q or %q", BackoffFixed, BackoffExponential)
+		}
+	}
+	if f := s.ForEach; f != nil {
+		if strings.TrimSpace(f.Items) == "" {
+			add("choose the list to run once per item over")
+		}
+		if f.Concurrency < 0 || f.Concurrency > MaxForEachConcurrency {
+			add("items at a time must be between 1 and %d", MaxForEachConcurrency)
+		}
+	}
+	return problems
 }
 
 // findCycle returns the steps of one cycle (first step repeated at the end),
@@ -156,10 +190,11 @@ func findCycle(def Definition) []string {
 	return nil
 }
 
-// checkExpressions compiles every expression in step configs and checks that
-// a step only reads outputs of steps that finish before it starts (its
-// ancestors) and only inputs the workflow declares. Secrets are checked when
-// a run starts, since they live outside the workflow.
+// checkExpressions compiles every expression in step configs, conditions
+// and loop lists, and checks that a step only reads outputs of steps that
+// finish before it starts (its ancestors), only inputs the workflow declares,
+// and `item` only when it runs once per item. Secrets are checked when a run
+// starts, since they live outside the workflow.
 func checkExpressions(def Definition) []Problem {
 	inputs := make(map[string]bool, len(def.Inputs))
 	for _, in := range def.Inputs {
@@ -169,25 +204,51 @@ func checkExpressions(def Definition) []Problem {
 
 	var problems []Problem
 	for _, s := range def.Steps {
+		fail := func(format string, args ...any) {
+			problems = append(problems, Problem{Step: s.ID, Message: fmt.Sprintf("step %q", s.ID) + fmt.Sprintf(format, args...)})
+		}
 		refs, err := tmpl.ConfigRefs(s.Config)
 		if err != nil {
-			problems = append(problems, Problem{Step: s.ID, Message: fmt.Sprintf("step %q: %v", s.ID, err)})
+			fail(": %v", err)
 			continue
 		}
+		// Expressions evaluated before the step's items exist can't use them.
+		var outer []tmpl.Ref
+		if s.If != "" {
+			e, err := tmpl.CompileExpr(s.If)
+			if err != nil {
+				fail(" condition: %v", err)
+				continue
+			}
+			outer = append(outer, e.Refs()...)
+		}
+		if s.ForEach != nil && strings.TrimSpace(s.ForEach.Items) != "" {
+			e, err := tmpl.CompileExpr(s.ForEach.Items)
+			if err != nil {
+				fail(" list of items: %v", err)
+				continue
+			}
+			outer = append(outer, e.Refs()...)
+		}
+
 		reported := map[tmpl.Ref]bool{}
-		for _, r := range refs {
+		for i, r := range append(refs, outer...) {
+			inConfig := i < len(refs)
 			if reported[r] {
 				continue
 			}
 			reported[r] = true
 			switch {
 			case r.Kind == "steps" && r.Name == s.ID:
-				problems = append(problems, Problem{Step: s.ID, Message: fmt.Sprintf("step %q can't use its own outputs", s.ID)})
+				fail(" can't use its own outputs")
 			case r.Kind == "steps" && !ancestors[s.ID][r.Name]:
-				problems = append(problems, Problem{Step: s.ID, Message: fmt.Sprintf(
-					"step %q uses outputs of %q but doesn't run after it; connect %s → %s", s.ID, r.Name, r.Name, s.ID)})
+				fail(" uses outputs of %q but doesn't run after it; connect %s → %s", r.Name, r.Name, s.ID)
 			case r.Kind == "inputs" && !inputs[r.Name]:
-				problems = append(problems, Problem{Step: s.ID, Message: fmt.Sprintf("step %q uses input %q, which isn't defined", s.ID, r.Name)})
+				fail(" uses input %q, which isn't defined", r.Name)
+			case r.Kind == "item" && !inConfig:
+				fail(" uses %s outside its config; the item only exists while the step runs", r.Name)
+			case r.Kind == "item" && s.ForEach == nil:
+				fail(" uses %s, which only exists in steps that run once per item", r.Name)
 			}
 		}
 	}
