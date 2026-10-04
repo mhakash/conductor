@@ -25,6 +25,9 @@ func (in workflowInput) toWorkflow() workflow.Workflow {
 	if in.Definition != nil {
 		def = *in.Definition
 	}
+	if def.Inputs == nil {
+		def.Inputs = []workflow.Input{}
+	}
 	if def.Steps == nil {
 		def.Steps = []workflow.Step{}
 	}

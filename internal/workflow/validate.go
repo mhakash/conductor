@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"conductor/internal/tmpl"
 )
 
 // Problem is one validation failure. Step or Edge points at the offending
@@ -51,6 +53,7 @@ func Validate(w Workflow, blockExists func(string) bool) error {
 	if def.SchemaVersion != SchemaVersion {
 		add(Problem{Message: fmt.Sprintf("unsupported schema version %d", def.SchemaVersion)})
 	}
+	problems = append(problems, validateInputs(def.Inputs)...)
 
 	steps := make(map[string]bool, len(def.Steps))
 	for _, s := range def.Steps {
@@ -92,6 +95,10 @@ func Validate(w Workflow, blockExists func(string) bool) error {
 		if cycle := findCycle(def); cycle != nil {
 			add(Problem{Step: cycle[0], Message: "steps form a cycle: " + strings.Join(cycle, " → ")})
 		}
+	}
+	// Expression references depend on the graph, so check them last.
+	if len(problems) == 0 {
+		problems = append(problems, checkExpressions(def)...)
 	}
 
 	if len(problems) > 0 {
@@ -147,4 +154,70 @@ func findCycle(def Definition) []string {
 		}
 	}
 	return nil
+}
+
+// checkExpressions compiles every expression in step configs and checks that
+// a step only reads outputs of steps that finish before it starts (its
+// ancestors) and only inputs the workflow declares. Secrets are checked when
+// a run starts, since they live outside the workflow.
+func checkExpressions(def Definition) []Problem {
+	inputs := make(map[string]bool, len(def.Inputs))
+	for _, in := range def.Inputs {
+		inputs[in.Name] = true
+	}
+	ancestors := ancestorSets(def)
+
+	var problems []Problem
+	for _, s := range def.Steps {
+		refs, err := tmpl.ConfigRefs(s.Config)
+		if err != nil {
+			problems = append(problems, Problem{Step: s.ID, Message: fmt.Sprintf("step %q: %v", s.ID, err)})
+			continue
+		}
+		reported := map[tmpl.Ref]bool{}
+		for _, r := range refs {
+			if reported[r] {
+				continue
+			}
+			reported[r] = true
+			switch {
+			case r.Kind == "steps" && r.Name == s.ID:
+				problems = append(problems, Problem{Step: s.ID, Message: fmt.Sprintf("step %q can't use its own outputs", s.ID)})
+			case r.Kind == "steps" && !ancestors[s.ID][r.Name]:
+				problems = append(problems, Problem{Step: s.ID, Message: fmt.Sprintf(
+					"step %q uses outputs of %q but doesn't run after it; connect %s → %s", s.ID, r.Name, r.Name, s.ID)})
+			case r.Kind == "inputs" && !inputs[r.Name]:
+				problems = append(problems, Problem{Step: s.ID, Message: fmt.Sprintf("step %q uses input %q, which isn't defined", s.ID, r.Name)})
+			}
+		}
+	}
+	return problems
+}
+
+// ancestorSets maps each step to every step it transitively depends on.
+func ancestorSets(def Definition) map[string]map[string]bool {
+	parents := map[string][]string{}
+	for _, e := range def.Edges {
+		parents[e.To] = append(parents[e.To], e.From)
+	}
+	memo := map[string]map[string]bool{}
+	var of func(id string) map[string]bool
+	of = func(id string) map[string]bool {
+		if a, ok := memo[id]; ok {
+			return a
+		}
+		a := map[string]bool{}
+		memo[id] = a
+		for _, p := range parents[id] {
+			a[p] = true
+			for q := range of(p) {
+				a[q] = true
+			}
+		}
+		return a
+	}
+	for _, s := range def.Steps {
+		of(s.ID)
+	}
+	return memo
 }
