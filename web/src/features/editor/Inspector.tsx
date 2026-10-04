@@ -1,14 +1,17 @@
-import { Trash2 } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { Plus, Trash2, X } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
 import { Button } from '@/components/ui/Button'
-import { FormField, Input, Textarea } from '@/components/ui/Input'
+import { FormField, Input, Select, Textarea } from '@/components/ui/Input'
 import { BlockIcon } from '@/features/blocks/BlockIcon'
 import type { Block } from '@/features/blocks/api'
+import { useSecrets } from '@/features/secrets/api'
+import type { InputType, WorkflowInput } from '@/features/workflows/api'
 
 import { ConfigField } from './fields/ConfigField'
-import type { StepNode } from './graph'
+import { ExpressionScope, type ExpressionOption } from './fields/expressions'
+import { ancestorsOf, type StepNode } from './graph'
 import { useEditor } from './store'
 
 export function Inspector({ blocks }: { blocks: Map<string, Block> }) {
@@ -22,7 +25,7 @@ export function Inspector({ blocks }: { blocks: Map<string, Block> }) {
       className="hidden w-80 shrink-0 flex-col overflow-y-auto border-l border-line bg-surface lg:flex"
     >
       {step && block ? (
-        <StepInspector key={step.id} step={step} block={block} />
+        <StepInspector key={step.id} step={step} block={block} blocks={blocks} />
       ) : (
         <WorkflowInspector selectedCount={selected.length} />
       )}
@@ -41,7 +44,16 @@ function Section({ title, children }: { title?: string; children: ReactNode }) {
   )
 }
 
-function StepInspector({ step, block }: { step: StepNode; block: Block }) {
+function StepInspector({
+  step,
+  block,
+  blocks,
+}: {
+  step: StepNode
+  block: Block
+  blocks: Map<string, Block>
+}) {
+  const scope = useStepScope(step.id, blocks)
   const updateStep = useEditor((s) => s.updateStep)
   const removeStep = useEditor((s) => s.removeStep)
   const problems = useEditor(useShallow((s) => s.problems.filter((p) => p.step === step.id)))
@@ -83,14 +95,20 @@ function StepInspector({ step, block }: { step: StepNode; block: Block }) {
 
       {block.fields.length > 0 && (
         <Section title="Configuration">
-          {block.fields.map((f) => (
-            <ConfigField
-              key={f.key}
-              field={f}
-              value={step.data.config[f.key]}
-              onChange={(v) => setConfig(f.key, v)}
-            />
-          ))}
+          <p className="-mt-2 text-xs text-fg-subtle">
+            Type <code className="font-mono text-brass">{'{{'}</code> to use outputs of earlier
+            steps, inputs or secrets.
+          </p>
+          <ExpressionScope.Provider value={scope}>
+            {block.fields.map((f) => (
+              <ConfigField
+                key={f.key}
+                field={f}
+                value={step.data.config[f.key]}
+                onChange={(v) => setConfig(f.key, v)}
+              />
+            ))}
+          </ExpressionScope.Provider>
         </Section>
       )}
 
@@ -112,7 +130,7 @@ function StepInspector({ step, block }: { step: StepNode; block: Block }) {
       </Section>
 
       {block.outputs.length > 0 && (
-        <Section title="Outputs">
+        <Section title="Outputs for later steps">
           <dl className="flex flex-col gap-2.5">
             {block.outputs.map((o) => (
               <div key={o.key}>
@@ -183,7 +201,10 @@ function WorkflowInspector({ selectedCount }: { selectedCount: number }) {
   const stepCount = useEditor((s) => s.nodes.length)
   const edgeCount = useEditor((s) => s.edges.length)
   const setDescription = useEditor((s) => s.setDescription)
-  const problems = useEditor(useShallow((s) => s.problems.filter((p) => !p.step)))
+  // Input problems are shown next to the inputs.
+  const problems = useEditor(
+    useShallow((s) => s.problems.filter((p) => !p.step && !p.message.startsWith('input'))),
+  )
 
   return (
     <>
@@ -204,6 +225,7 @@ function WorkflowInspector({ selectedCount }: { selectedCount: number }) {
           </ul>
         )}
       </Section>
+      <InputsEditor />
       <Section>
         <p className="font-mono text-xs text-fg-subtle">
           {stepCount} {stepCount === 1 ? 'step' : 'steps'} · {edgeCount}{' '}
@@ -216,5 +238,160 @@ function WorkflowInspector({ selectedCount }: { selectedCount: number }) {
         </p>
       </Section>
     </>
+  )
+}
+
+/** Everything an expression in this step can refer to, for autocomplete. */
+function useStepScope(stepId: string, blocks: Map<string, Block>): ExpressionOption[] {
+  const nodes = useEditor((s) => s.nodes)
+  const edges = useEditor((s) => s.edges)
+  const inputs = useEditor((s) => s.inputs)
+  const secrets = useSecrets().data
+
+  return useMemo(() => {
+    const ancestors = ancestorsOf(stepId, edges)
+    const options: ExpressionOption[] = []
+    for (const n of nodes) {
+      if (!ancestors.has(n.id)) continue
+      const b = blocks.get(n.data.block)
+      for (const o of b?.outputs ?? []) {
+        options.push({
+          path: `steps.${n.id}.outputs.${o.key}`,
+          detail: `${n.data.name || n.id} · ${o.description}`,
+          kind: 'step',
+        })
+      }
+    }
+    for (const i of inputs) {
+      options.push({
+        path: `inputs.${i.name}`,
+        detail: i.label || `${i.type} input`,
+        kind: 'input',
+      })
+    }
+    for (const sec of secrets ?? []) {
+      options.push({ path: `secrets.${sec.name}`, detail: 'Secret', kind: 'secret' })
+    }
+    options.push(
+      { path: 'run.id', detail: 'This run’s id', kind: 'run' },
+      { path: 'workflow.name', detail: 'Workflow name', kind: 'run' },
+    )
+    return options
+  }, [stepId, nodes, edges, inputs, secrets, blocks])
+}
+
+const inputTypes: { value: InputType; label: string }[] = [
+  { value: 'text', label: 'Text' },
+  { value: 'number', label: 'Number' },
+  { value: 'boolean', label: 'Yes / no' },
+]
+
+function InputsEditor() {
+  const inputs = useEditor((s) => s.inputs)
+  const setInputs = useEditor((s) => s.setInputs)
+  const problems = useEditor(
+    useShallow((s) => s.problems.filter((p) => p.message.startsWith('input'))),
+  )
+
+  const update = (i: number, patch: Partial<WorkflowInput>) =>
+    setInputs(inputs.map((input, j) => (j === i ? { ...input, ...patch } : input)))
+
+  const add = () => {
+    const taken = new Set(inputs.map((i) => i.name))
+    let name = 'version'
+    for (let n = 2; taken.has(name); n++) name = `input${n}`
+    setInputs([...inputs, { name, type: 'text', required: false }])
+  }
+
+  return (
+    <Section title="Inputs">
+      <p className="-mt-2 text-xs text-fg-subtle">
+        Asked for when the workflow runs. Steps read them as{' '}
+        <code className="font-mono">inputs.name</code>.
+      </p>
+      {inputs.map((input, i) => (
+        <div
+          key={i}
+          className="flex flex-col gap-2 rounded-lg border border-line bg-canvas/50 p-2.5"
+        >
+          <div className="flex gap-1.5">
+            <Input
+              aria-label="Input name"
+              value={input.name}
+              spellCheck={false}
+              className="font-mono text-xs"
+              onChange={(e) => update(i, { name: e.target.value })}
+            />
+            <Select
+              aria-label="Type"
+              value={input.type}
+              className="w-28 shrink-0"
+              onChange={(e) => update(i, { type: e.target.value as InputType, default: undefined })}
+            >
+              {inputTypes.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
+              ))}
+            </Select>
+            <button
+              aria-label={`Remove input ${input.name}`}
+              onClick={() => setInputs(inputs.filter((_, j) => j !== i))}
+              className="flex size-8 shrink-0 items-center justify-center rounded-md text-fg-subtle hover:bg-hover hover:text-fg"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {input.type === 'boolean' ? (
+              <Select
+                aria-label="Default"
+                value={input.default === true ? 'true' : 'false'}
+                onChange={(e) => update(i, { default: e.target.value === 'true' })}
+              >
+                <option value="false">Default: no</option>
+                <option value="true">Default: yes</option>
+              </Select>
+            ) : (
+              <Input
+                aria-label="Default value"
+                placeholder="Default (optional)"
+                type={input.type === 'number' ? 'number' : 'text'}
+                value={input.default === undefined ? '' : String(input.default)}
+                onChange={(e) =>
+                  update(i, {
+                    default:
+                      e.target.value === ''
+                        ? undefined
+                        : input.type === 'number'
+                          ? e.target.valueAsNumber
+                          : e.target.value,
+                  })
+                }
+              />
+            )}
+            <label className="flex shrink-0 items-center gap-1.5 px-1 text-xs text-fg-muted">
+              <input
+                type="checkbox"
+                checked={!!input.required}
+                onChange={(e) => update(i, { required: e.target.checked })}
+                className="accent-brass"
+              />
+              Required
+            </label>
+          </div>
+        </div>
+      ))}
+      {problems.length > 0 && (
+        <ul className="flex flex-col gap-1 text-xs text-coral">
+          {problems.map((p) => (
+            <li key={p.message}>{p.message}</li>
+          ))}
+        </ul>
+      )}
+      <Button variant="ghost" className="w-fit" onClick={add}>
+        <Plus className="size-3.5" /> Add input
+      </Button>
+    </Section>
   )
 }

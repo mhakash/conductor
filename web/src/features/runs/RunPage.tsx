@@ -1,6 +1,6 @@
 import { ChevronLeft, Play, Square, Workflow as WorkflowIcon } from 'lucide-react'
 import { useMemo, type ReactNode } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { Link, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/Button'
@@ -14,7 +14,6 @@ import {
   useCancelRun,
   useRun,
   useRunLogs,
-  useStartRun,
   type LogLine,
   type Run,
   type StepRun,
@@ -24,6 +23,7 @@ import { RunGraph } from './RunGraph'
 import { useRunStream } from './stream'
 import { executionOrder } from './order'
 import { StatusBadge, StatusIcon } from './StatusIcon'
+import { useRunWorkflow } from './useRunWorkflow'
 
 export function RunPage() {
   const { id = '' } = useParams()
@@ -80,6 +80,18 @@ function RunView({ run }: { run: Run }) {
   return (
     <div className="flex h-full flex-col">
       <RunHeader run={run} took={took} live={live} />
+
+      {run.inputs && Object.keys(run.inputs).length > 0 && (
+        <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line px-4 py-2 md:px-6">
+          <dt className="text-[11px] font-medium tracking-wide text-fg-subtle uppercase">Inputs</dt>
+          {Object.entries(run.inputs).map(([k, v]) => (
+            <dd key={k} className="font-mono text-xs">
+              <span className="text-fg-subtle">{k}=</span>
+              <span className="text-fg">{typeof v === 'string' ? v : JSON.stringify(v)}</span>
+            </dd>
+          ))}
+        </dl>
+      )}
 
       {run.error && (
         <p className="border-b border-line bg-coral/5 px-4 py-2.5 text-coral md:px-6">
@@ -148,14 +160,16 @@ function RunView({ run }: { run: Run }) {
 
 function RunHeader({ run, took, live }: { run: Run; took: number | null; live: boolean }) {
   const cancel = useCancelRun()
-  const start = useStartRun()
-  const navigate = useNavigate()
+  const runner = useRunWorkflow()
   const active = isActive(run.status)
 
+  // Runs again with the same inputs, shown for review when there are any.
   const runAgain = () =>
-    start.mutate(run.workflowId, {
-      onSuccess: (next) => navigate(`/runs/${next.id}`),
-      onError: (err) => toast.error(`Couldn't start the run: ${err.message}`),
+    runner.run({
+      workflowId: run.workflowId,
+      workflowName: run.workflowName,
+      inputs: run.definition.inputs ?? [],
+      initial: run.inputs,
     })
 
   return (
@@ -207,12 +221,13 @@ function RunHeader({ run, took, live }: { run: Run; took: number | null; live: b
             Cancel run
           </Button>
         ) : (
-          <Button onClick={runAgain} disabled={start.isPending}>
+          <Button onClick={runAgain} disabled={runner.pending}>
             <Play className="size-3" fill="currentColor" />
             Run again
           </Button>
         )}
       </div>
+      {runner.dialog}
     </header>
   )
 }
@@ -228,6 +243,8 @@ type StepDetailProps = {
 function StepDetail({ step, name, block, lines, now }: StepDetailProps) {
   const d = elapsed(step.startedAt, step.finishedAt, now)
   const outputs = Object.entries(step.outputs ?? {})
+  // The config after expressions were evaluated (secrets masked).
+  const config = Object.entries(step.config ?? {})
   const empty =
     step.status === 'queued'
       ? 'Waiting for its dependencies.'
@@ -263,21 +280,33 @@ function StepDetail({ step, name, block, lines, now }: StepDetailProps) {
         <LogView lines={lines} follow={step.status === 'running'} empty={empty} />
       </Panel>
 
+      {config.length > 0 && (
+        <Panel title="Ran with">
+          <KeyValues entries={config} />
+        </Panel>
+      )}
+
       {outputs.length > 0 && (
         <Panel title="Outputs">
-          <dl className="divide-y divide-line">
-            {outputs.map(([key, value]) => (
-              <div key={key} className="flex flex-col gap-1 px-4 py-2.5 sm:flex-row sm:gap-4">
-                <dt className="w-28 shrink-0 font-mono text-xs text-fg-muted">{key}</dt>
-                <dd className="min-w-0 flex-1">
-                  <OutputValue value={value} />
-                </dd>
-              </div>
-            ))}
-          </dl>
+          <KeyValues entries={outputs} />
         </Panel>
       )}
     </div>
+  )
+}
+
+function KeyValues({ entries }: { entries: [string, unknown][] }) {
+  return (
+    <dl className="divide-y divide-line">
+      {entries.map(([key, value]) => (
+        <div key={key} className="flex flex-col gap-1 px-4 py-2.5 sm:flex-row sm:gap-4">
+          <dt className="w-28 shrink-0 font-mono text-xs text-fg-muted">{key}</dt>
+          <dd className="min-w-0 flex-1">
+            <OutputValue value={value} />
+          </dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 

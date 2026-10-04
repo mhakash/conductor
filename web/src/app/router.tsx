@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate } from 'react-router'
 import { AppShell } from '@/components/layout/AppShell'
 import { RunPage } from '@/features/runs/RunPage'
 import { RunsPage } from '@/features/runs/RunsPage'
+import { SecretsPage } from '@/features/secrets/SecretsPage'
 import { WorkflowsPage } from '@/features/workflows/WorkflowsPage'
 
 export const router = createBrowserRouter([
@@ -20,6 +21,7 @@ export const router = createBrowserRouter([
       },
       { path: 'runs', element: <RunsPage /> },
       { path: 'runs/:id', element: <RunPage /> },
+      { path: 'secrets', element: <SecretsPage /> },
       { path: '*', element: <Navigate to="/workflows" replace /> },
     ],
   },

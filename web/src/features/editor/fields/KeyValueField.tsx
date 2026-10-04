@@ -3,6 +3,8 @@ import { useState } from 'react'
 
 import { Input } from '@/components/ui/Input'
 
+import { CodeField } from './CodeField'
+
 type Row = { key: string; value: string }
 
 type KeyValueFieldProps = {
@@ -35,20 +37,20 @@ export function KeyValueField({ id, value, onChange }: KeyValueFieldProps) {
             aria-label="Name"
             placeholder="NAME"
             value={row.key}
-            className="font-mono text-xs"
+            className="w-32 shrink-0 font-mono text-xs"
             onChange={(e) =>
               update(rows.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)))
             }
           />
-          <Input
-            aria-label="Value"
-            placeholder="value"
-            value={row.value}
-            className="font-mono text-xs"
-            onChange={(e) =>
-              update(rows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))
-            }
-          />
+          <div className="min-w-0 flex-1">
+            <CodeField
+              id={`${id}-value-${i}`}
+              value={row.value}
+              placeholder="value"
+              singleLine
+              onChange={(v) => update(rows.map((r, j) => (j === i ? { ...r, value: v } : r)))}
+            />
+          </div>
           <button
             aria-label="Remove"
             onClick={() => update(rows.filter((_, j) => j !== i))}

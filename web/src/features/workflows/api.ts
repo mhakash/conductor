@@ -15,8 +15,21 @@ export type Step = {
 
 export type Edge = { from: string; to: string }
 
+export type InputType = 'text' | 'number' | 'boolean'
+
+/** A value asked for when a run starts; read in expressions as inputs.<name>. */
+export type WorkflowInput = {
+  name: string
+  label?: string
+  type: InputType
+  default?: string | number | boolean
+  required?: boolean
+  description?: string
+}
+
 export type Definition = {
   schemaVersion: number
+  inputs?: WorkflowInput[]
   steps: Step[]
   edges: Edge[]
 }
@@ -32,7 +45,7 @@ export type Workflow = {
 
 export type WorkflowSummary = Omit<Workflow, 'definition'> & { stepCount: number }
 
-export type WorkflowInput = Pick<Workflow, 'name' | 'description'> & { definition?: Definition }
+export type WorkflowFields = Pick<Workflow, 'name' | 'description'> & { definition?: Definition }
 
 const keys = {
   all: ['workflows'] as const,
@@ -58,7 +71,7 @@ export function useWorkflow(id: string) {
 export function useCreateWorkflow() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: WorkflowInput) => api.post<Workflow>('/workflows', input),
+    mutationFn: (input: WorkflowFields) => api.post<Workflow>('/workflows', input),
     onSuccess: (wf) => {
       qc.setQueryData(keys.one(wf.id), wf)
       void qc.invalidateQueries({ queryKey: keys.all, exact: true })
@@ -69,7 +82,7 @@ export function useCreateWorkflow() {
 export function useUpdateWorkflow(id: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: WorkflowInput) => api.put<Workflow>(`/workflows/${id}`, input),
+    mutationFn: (input: WorkflowFields) => api.put<Workflow>(`/workflows/${id}`, input),
     onSuccess: (wf) => {
       qc.setQueryData(keys.one(wf.id), wf)
       void qc.invalidateQueries({ queryKey: keys.all, exact: true })

@@ -1,7 +1,7 @@
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react'
 import { ChevronLeft, Network, Play, Plus } from 'lucide-react'
 import { useEffect, useEffectEvent } from 'react'
-import { Link, useBlocker, useNavigate, useParams } from 'react-router'
+import { Link, useBlocker, useParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/Button'
@@ -10,7 +10,8 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from '@/components/ui/Menu'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { BlockIcon } from '@/features/blocks/BlockIcon'
 import { useBlockMap, useBlocks, type Block } from '@/features/blocks/api'
-import { isActive, useStartRun, type Run } from '@/features/runs/api'
+import { isActive, type Run } from '@/features/runs/api'
+import { useRunWorkflow } from '@/features/runs/useRunWorkflow'
 import { StatusIcon } from '@/features/runs/StatusIcon'
 import { useUpdateWorkflow, useWorkflow, type Workflow } from '@/features/workflows/api'
 import { ApiError } from '@/lib/api'
@@ -65,9 +66,8 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
   const dirty = useEditor((s) => s.dirty)
   const addStep = useEditor((s) => s.addStep)
   const update = useUpdateWorkflow(workflow.id)
-  const startRun = useStartRun()
+  const runner = useRunWorkflow((problems) => useEditor.getState().setProblems(problems))
   const latest = useLatestRun(workflow.id)
-  const navigate = useNavigate()
   const { screenToFlowPosition, flowToScreenPosition, setCenter, getZoom, fitView } = useReactFlow()
 
   // Load once per workflow; later refetches must not clobber the draft.
@@ -92,7 +92,7 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
       await update.mutateAsync({
         name: s.name,
         description: s.description,
-        definition: toDefinition(s.nodes, s.edges),
+        definition: toDefinition(s.nodes, s.edges, s.inputs),
       })
       useEditor.getState().markSaved()
       return true
@@ -109,12 +109,8 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
   // Runs execute the saved workflow, so unsaved edits are saved first.
   const runWorkflow = async () => {
     if (useEditor.getState().dirty && !(await persist())) return
-    try {
-      const run = await startRun.mutateAsync(workflow.id)
-      navigate(`/runs/${run.id}`)
-    } catch (err) {
-      showProblems("Can't run yet", err as Error)
-    }
+    const s = useEditor.getState()
+    runner.run({ workflowId: workflow.id, workflowName: s.name, inputs: s.inputs })
   }
 
   const onKey = useEffectEvent((e: KeyboardEvent) => {
@@ -220,7 +216,7 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
             Save
             <kbd className="hidden font-sans text-[11px] text-fg-subtle sm:inline">⌘S</kbd>
           </Button>
-          <Button onClick={runWorkflow} disabled={update.isPending || startRun.isPending}>
+          <Button onClick={runWorkflow} disabled={update.isPending || runner.pending}>
             <Play className="size-3" fill="currentColor" />
             Run
           </Button>
@@ -236,6 +232,7 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
       </div>
 
       <UnsavedChangesGuard dirty={dirty} />
+      {runner.dialog}
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import type { Edge as FlowEdge, Node, XYPosition } from '@xyflow/react'
 
-import type { Definition, Edge, Step } from '@/features/workflows/api'
+import type { Definition, Edge, Step, WorkflowInput } from '@/features/workflows/api'
 
 export const SCHEMA_VERSION = 1
 
@@ -32,7 +32,11 @@ export function toFlow(def: Definition): { nodes: StepNode[]; edges: FlowEdge[] 
   }
 }
 
-export function toDefinition(nodes: StepNode[], edges: FlowEdge[]): Definition {
+export function toDefinition(
+  nodes: StepNode[],
+  edges: FlowEdge[],
+  inputs: WorkflowInput[] = [],
+): Definition {
   const steps: Step[] = nodes.map((n) => ({
     id: n.id,
     block: n.data.block,
@@ -43,6 +47,7 @@ export function toDefinition(nodes: StepNode[], edges: FlowEdge[]): Definition {
   }))
   return {
     schemaVersion: SCHEMA_VERSION,
+    inputs,
     steps,
     edges: edges.map((e) => ({ from: e.source, to: e.target })),
   }
@@ -102,4 +107,19 @@ export function findFreeSpot(nodes: StepNode[], desired: XYPosition): XYPosition
   const p = { ...desired }
   while (overlaps(p)) p.y += NODE_SIZE.height + GAP
   return p
+}
+
+/** Every step that finishes before `id` starts: its transitive dependencies. */
+export function ancestorsOf(id: string, edges: FlowEdge[]): Set<string> {
+  const parents = new Map<string, string[]>()
+  for (const e of edges) parents.set(e.target, [...(parents.get(e.target) ?? []), e.source])
+  const seen = new Set<string>()
+  const stack = [...(parents.get(id) ?? [])]
+  while (stack.length) {
+    const p = stack.pop()!
+    if (seen.has(p)) continue
+    seen.add(p)
+    stack.push(...(parents.get(p) ?? []))
+  }
+  return seen
 }

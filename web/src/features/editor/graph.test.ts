@@ -1,7 +1,14 @@
 import type { Edge } from '@xyflow/react'
 import { describe, expect, it } from 'vitest'
 
-import { findFreeSpot, nextStepId, toDefinition, toFlow, wouldCreateCycle } from './graph'
+import {
+  ancestorsOf,
+  findFreeSpot,
+  nextStepId,
+  toDefinition,
+  toFlow,
+  wouldCreateCycle,
+} from './graph'
 
 const edges = (...pairs: [string, string][]): Edge[] =>
   pairs.map(([source, target]) => ({ id: `${source}->${target}`, source, target }))
@@ -93,5 +100,13 @@ describe('timeout', () => {
     const out = toDefinition(nodes, edges)
     expect(out.steps[0].timeout).toBe('5m')
     expect('timeout' in out.steps[1]).toBe(false)
+  })
+})
+
+describe('ancestorsOf', () => {
+  it('collects transitive dependencies only', () => {
+    const e = edges(['tag', 'push'], ['push', 'jira'], ['push', 'confluence'], ['jira', 'email'])
+    expect([...ancestorsOf('email', e)].sort()).toEqual(['jira', 'push', 'tag'])
+    expect(ancestorsOf('tag', e).size).toBe(0)
   })
 })

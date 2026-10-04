@@ -4,6 +4,14 @@ import { shell } from '@codemirror/legacy-modes/mode/shell'
 import { EditorView } from '@codemirror/view'
 import { tags as t } from '@lezer/highlight'
 import CodeMirror, { type Extension } from '@uiw/react-codemirror'
+import { useEffect, useMemo, useRef } from 'react'
+
+import {
+  expressionSupport,
+  setExpressionScope,
+  singleLine,
+  useExpressionScope,
+} from './expressions'
 
 const languages: Record<string, () => Extension> = {
   shell: () => StreamLanguage.define(shell),
@@ -49,32 +57,72 @@ const highlight = syntaxHighlighting(
   ]),
 )
 
+const singleLineTheme = EditorView.theme({
+  '.cm-content': { padding: '6px 0' },
+  '.cm-scroller': { overflow: 'hidden' },
+})
+
 type CodeFieldProps = {
   id: string
   value: string
   onChange: (value: string) => void
   language?: string
   placeholder?: string
+  /** Behave like a one-line text input (no wrapping, Enter does nothing). */
+  singleLine?: boolean
 }
 
-export function CodeField({ id, value, onChange, language, placeholder }: CodeFieldProps) {
-  const lang = language ? languages[language] : undefined
+/**
+ * A CodeMirror field that understands `{{ … }}` expressions: they are
+ * highlighted, and typing inside one offers what the step can refer to.
+ */
+export function CodeField({
+  id,
+  value,
+  onChange,
+  language,
+  placeholder,
+  singleLine: oneLine,
+}: CodeFieldProps) {
+  const scope = useExpressionScope()
+  const view = useRef<EditorView | null>(null)
+  useEffect(() => {
+    view.current?.dispatch({ effects: setExpressionScope.of(scope) })
+  }, [scope])
+
+  // Stable across renders so CodeMirror doesn't reconfigure on every keystroke.
+  const extensions = useMemo(() => {
+    const lang = language ? languages[language] : undefined
+    return [
+      theme,
+      highlight,
+      expressionSupport(),
+      ...(oneLine ? [singleLine, singleLineTheme] : [EditorView.lineWrapping]),
+      ...(lang ? [lang()] : []),
+    ]
+  }, [language, oneLine])
+
   return (
     <CodeMirror
       id={id}
       value={value}
       onChange={onChange}
+      onCreateEditor={(v) => {
+        view.current = v
+        v.dispatch({ effects: setExpressionScope.of(scope) })
+      }}
       placeholder={placeholder}
       theme="none"
-      minHeight="72px"
-      maxHeight="320px"
+      minHeight={oneLine ? undefined : '72px'}
+      maxHeight={oneLine ? undefined : '320px'}
       basicSetup={{
         lineNumbers: false,
         foldGutter: false,
         highlightActiveLine: false,
+        // Ours replaces the default word completion (see expressions.ts).
         autocompletion: false,
       }}
-      extensions={[theme, highlight, EditorView.lineWrapping, ...(lang ? [lang()] : [])]}
+      extensions={extensions}
     />
   )
 }

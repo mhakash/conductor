@@ -11,7 +11,7 @@ import {
 import { create } from 'zustand'
 
 import { defaultConfig, type Block } from '@/features/blocks/api'
-import type { Workflow } from '@/features/workflows/api'
+import type { Workflow, WorkflowInput } from '@/features/workflows/api'
 import type { Problem } from '@/lib/api'
 
 import {
@@ -28,6 +28,7 @@ type EditorState = {
   workflowId: string | null
   name: string
   description: string
+  inputs: WorkflowInput[]
   nodes: StepNode[]
   edges: Edge[]
   /** True when the draft differs from what was last loaded or saved. */
@@ -41,6 +42,7 @@ type EditorState = {
 
   setName: (name: string) => void
   setDescription: (description: string) => void
+  setInputs: (inputs: WorkflowInput[]) => void
   onNodesChange: (changes: NodeChange<StepNode>[]) => void
   onEdgesChange: (changes: EdgeChange[]) => void
   connect: (c: Connection) => void
@@ -60,6 +62,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
   workflowId: null,
   name: '',
   description: '',
+  inputs: [],
   nodes: [],
   edges: [],
   dirty: false,
@@ -71,6 +74,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
       workflowId: wf.id,
       name: wf.name,
       description: wf.description,
+      inputs: wf.definition.inputs ?? [],
       nodes,
       edges,
       dirty: false,
@@ -82,6 +86,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
 
   setName: (name) => set({ name, dirty: true }),
   setDescription: (description) => set({ description, dirty: true }),
+  setInputs: (inputs) => set({ inputs, dirty: true }),
 
   onNodesChange: (changes) =>
     set((s) => ({

@@ -40,6 +40,8 @@ internal/block     block descriptors (fields, outputs) + executors (RunFunc); bu
 internal/run       run/step/log types and the run Repository interface
 internal/engine    DAG scheduler: parallel steps, cancel, timeouts, batched logs
 internal/events    in-process broker fanning run events out to SSE streams
+internal/tmpl      {{ expr }} templates: compile, render, reference extraction
+internal/secrets   AES-GCM cipher, keychain key, secret store, output masker
 internal/store     SQLite (modernc) + goose migrations in store/migrations
 internal/server    chi routes, middleware, SPA handler; tests hit a real temp DB
 internal/version   ldflags-injected build info
@@ -55,7 +57,8 @@ web/src/
     editor/        canvas editor: Zustand store, graph helpers (tested), ELK
                    layout, palette, inspector, generated config fields
     runs/          runs list, run page (live graph, steps, logs, outputs),
-                   SSE stream hook (stream.ts), status icons
+                   SSE stream hook (stream.ts), run dialog for inputs
+    secrets/       secrets page (values are write-only)
   lib/             api client, cn()
   styles/index.css Tailwind v4 @theme design tokens
 ```
@@ -75,6 +78,10 @@ web/src/
 - Execution semantics (skip downstream on failure, timeouts, login shell,
   process groups) are in ADR 0003; keep them in sync when changing the engine.
 - Engine and block tests run with `go test -race`; keep them race-clean.
+- Expressions, inputs and secrets: ADR 0005. Anything a step reads must be
+  checked at save time (workflow.Validate) and resolved in the engine just
+  before the step runs. Anything stored or published about a run goes
+  through the run's secret masker.
 - Live updates: the engine publishes a `run.Event` after every store write;
   `/api/runs/{id}/events` streams snapshot + deltas (ADR 0004). New run state
   must be both stored and published.
@@ -115,6 +122,11 @@ web/src/
 - React Flow's built-in styles are imported before ours; theme overrides go
   on `.react-flow.dark` in `styles/index.css`.
 - Block icons are a fixed map in `BlockIcon.tsx`; add new lucide icons there.
+- Config text and code fields are CodeMirror (`fields/CodeField.tsx`) so they
+  get `{{ }}` highlighting and completion; the completion scope is fed in via
+  the `setExpressionScope` effect, not read from React during render.
+- The gitleaks pre-commit hook scans test fixtures too; use obviously fake
+  values that don't look like real tokens.
 - A single run is kept fresh by `useRunStream` (SSE) writing into the query
   cache, not by polling. Run lists still poll, and TanStack pauses that in
   hidden tabs.

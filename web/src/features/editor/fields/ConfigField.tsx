@@ -99,11 +99,12 @@ export function ConfigField({ field, value, onChange }: ConfigFieldProps) {
             )
           default:
             return (
-              <Input
+              <CodeField
                 id={id}
                 value={str(value)}
+                onChange={onChange}
                 placeholder={field.placeholder}
-                onChange={(e) => onChange(e.target.value)}
+                singleLine
               />
             )
         }

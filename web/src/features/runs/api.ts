@@ -22,6 +22,8 @@ export type StepRun = {
   status: RunStatus
   error?: string
   outputs: Record<string, unknown>
+  /** The config this step ran with: expressions evaluated, secrets masked. */
+  config?: Record<string, unknown>
   startedAt: string | null
   finishedAt: string | null
 }
@@ -31,6 +33,7 @@ export type Run = {
   workflowId: string
   workflowName: string
   definition: Definition
+  inputs?: Record<string, unknown>
   status: RunStatus
   error?: string
   createdAt: string
@@ -39,7 +42,7 @@ export type Run = {
   steps: StepRun[]
 }
 
-export type RunSummary = Omit<Run, 'definition' | 'steps'> & { stepCount: number }
+export type RunSummary = Omit<Run, 'definition' | 'steps' | 'inputs'> & { stepCount: number }
 
 export type LogLine = {
   seq: number
@@ -92,7 +95,13 @@ export function useRunLogs(id: string) {
 export function useStartRun() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (workflowId: string) => api.post<Run>(`/workflows/${workflowId}/runs`, {}),
+    mutationFn: ({
+      workflowId,
+      inputs,
+    }: {
+      workflowId: string
+      inputs?: Record<string, unknown>
+    }) => api.post<Run>(`/workflows/${workflowId}/runs`, { inputs: inputs ?? {} }),
     onSuccess: (run) => {
       qc.setQueryData(keys.one(run.id), run)
       void qc.invalidateQueries({ queryKey: keys.all })
