@@ -65,6 +65,12 @@ func TestWorkflowLifecycle(t *testing.T) {
 		t.Errorf("missing config not normalised to {}: %s", updated.Definition.Steps[0].Config)
 	}
 
+	// Saving on top of a version someone else replaced is refused.
+	stale := map[string]any{"name": "Stale", "definition": def, "updatedAt": created.UpdatedAt}
+	if code := do(t, "PUT", base+"/"+created.ID, stale, nil); code != http.StatusConflict {
+		t.Errorf("stale save: status %d, want 409", code)
+	}
+
 	var list []workflow.Summary
 	do(t, "GET", base, nil, &list)
 	if len(list) != 1 || list[0].StepCount != 2 {

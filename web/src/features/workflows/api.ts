@@ -45,7 +45,11 @@ export type Workflow = {
 
 export type WorkflowSummary = Omit<Workflow, 'definition'> & { stepCount: number }
 
-export type WorkflowFields = Pick<Workflow, 'name' | 'description'> & { definition?: Definition }
+export type WorkflowFields = Pick<Workflow, 'name' | 'description'> & {
+  definition?: Definition
+  /** The version being edited; the save is refused (409) if it is stale. */
+  updatedAt?: string
+}
 
 const keys = {
   all: ['workflows'] as const,
@@ -59,10 +63,13 @@ export function useWorkflows() {
   })
 }
 
+export const fetchWorkflow = (id: string, signal?: AbortSignal) =>
+  api.get<Workflow>(`/workflows/${id}`, { signal })
+
 export function useWorkflow(id: string) {
   return useQuery({
     queryKey: keys.one(id),
-    queryFn: ({ signal }) => api.get<Workflow>(`/workflows/${id}`, { signal }),
+    queryFn: ({ signal }) => fetchWorkflow(id, signal),
     // The editor owns the draft; refetching underneath it would be confusing.
     staleTime: Infinity,
   })

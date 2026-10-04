@@ -52,12 +52,21 @@ func TestWorkflowsCRUD(t *testing.T) {
 	}
 
 	got.Name = "Release prep"
-	updated, err := s.Update(ctx, got)
+	updated, err := s.Update(ctx, got, &got.UpdatedAt)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !updated.CreatedAt.Equal(created.CreatedAt) {
 		t.Errorf("update changed created_at: %v → %v", created.CreatedAt, updated.CreatedAt)
+	}
+
+	// A second writer still holding the old version is refused.
+	if _, err := s.Update(ctx, got, &got.UpdatedAt); !errors.Is(err, workflow.ErrConflict) {
+		t.Errorf("stale update: %v, want ErrConflict", err)
+	}
+	// Saving on top of the current version is fine.
+	if _, err := s.Update(ctx, updated, &updated.UpdatedAt); err != nil {
+		t.Errorf("update with current version: %v", err)
 	}
 
 	list, err := s.List(ctx)
@@ -77,7 +86,7 @@ func TestWorkflowsCRUD(t *testing.T) {
 	if err := s.Delete(ctx, created.ID); !errors.Is(err, workflow.ErrNotFound) {
 		t.Errorf("second delete: %v, want ErrNotFound", err)
 	}
-	if _, err := s.Update(ctx, got); !errors.Is(err, workflow.ErrNotFound) {
+	if _, err := s.Update(ctx, got, nil); !errors.Is(err, workflow.ErrNotFound) {
 		t.Errorf("update of deleted: %v, want ErrNotFound", err)
 	}
 }

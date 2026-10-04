@@ -17,6 +17,11 @@ timestamps).
 Normalised tables for steps/edges were rejected: nothing queries individual
 steps across workflows, and they would make saves multi-statement.
 
+**Saves are conflict-checked.** The editor sends the `updatedAt` it loaded;
+if the workflow was saved elsewhere since, the save fails with 409 and the
+editor offers to load the latest version or overwrite it. (Added after a real
+lost update: an editor tab opened earlier silently replaced a newer save.)
+
 **Validation on save is structural only** — names, step ids, known blocks,
 edges, cycles. Missing required config is allowed so half-built drafts can be
 saved; it is reported when the workflow is run.

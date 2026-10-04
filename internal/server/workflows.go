@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -18,6 +19,9 @@ type workflowInput struct {
 	Name        string               `json:"name"`
 	Description string               `json:"description"`
 	Definition  *workflow.Definition `json:"definition"`
+	// UpdatedAt is the version the client edited; when set, saving fails
+	// with 409 if the workflow has changed since.
+	UpdatedAt *time.Time `json:"updatedAt"`
 }
 
 func (in workflowInput) toWorkflow() workflow.Workflow {
@@ -93,7 +97,7 @@ func (s *Server) handleUpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 		s.repoError(w, r, err)
 		return
 	}
-	updated, err := s.workflows.Update(r.Context(), wf)
+	updated, err := s.workflows.Update(r.Context(), wf, in.UpdatedAt)
 	if err != nil {
 		s.repoError(w, r, err)
 		return
@@ -119,6 +123,8 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, workflow.ErrNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, workflow.ErrConflict):
+		writeError(w, http.StatusConflict, "This workflow was changed elsewhere since you opened it.")
 	case errors.As(err, &verr):
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 			"error":    "The workflow has problems that need fixing before it can be saved.",

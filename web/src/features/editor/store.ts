@@ -26,6 +26,8 @@ import {
 
 type EditorState = {
   workflowId: string | null
+  /** updatedAt of the version this draft is based on, for conflict checks. */
+  version: string | null
   name: string
   description: string
   inputs: WorkflowInput[]
@@ -37,7 +39,7 @@ type EditorState = {
   problems: Problem[]
 
   load: (wf: Workflow) => void
-  markSaved: () => void
+  markSaved: (version: string) => void
   setProblems: (problems: Problem[]) => void
 
   setName: (name: string) => void
@@ -60,6 +62,7 @@ const isViewOnly = (c: NodeChange | EdgeChange) => c.type === 'select' || c.type
 
 export const useEditor = create<EditorState>()((set, get) => ({
   workflowId: null,
+  version: null,
   name: '',
   description: '',
   inputs: [],
@@ -72,6 +75,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
     const { nodes, edges } = toFlow(wf.definition)
     set({
       workflowId: wf.id,
+      version: wf.updatedAt,
       name: wf.name,
       description: wf.description,
       inputs: wf.definition.inputs ?? [],
@@ -81,7 +85,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
       problems: [],
     })
   },
-  markSaved: () => set({ dirty: false, problems: [] }),
+  markSaved: (version) => set({ version, dirty: false, problems: [] }),
   setProblems: (problems) => set({ problems }),
 
   setName: (name) => set({ name, dirty: true }),

@@ -63,13 +63,19 @@ type Summary struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
-var ErrNotFound = errors.New("workflow not found")
+var (
+	ErrNotFound = errors.New("workflow not found")
+	// ErrConflict means the workflow changed since the caller last read it.
+	ErrConflict = errors.New("workflow was changed elsewhere")
+)
 
 type Repository interface {
 	List(ctx context.Context) ([]Summary, error)
 	Get(ctx context.Context, id string) (Workflow, error)
 	Create(ctx context.Context, w Workflow) (Workflow, error)
-	Update(ctx context.Context, w Workflow) (Workflow, error)
+	// Update replaces a workflow. With ifUnchangedSince set, it fails with
+	// ErrConflict unless the stored workflow still has that UpdatedAt.
+	Update(ctx context.Context, w Workflow, ifUnchangedSince *time.Time) (Workflow, error)
 	Delete(ctx context.Context, id string) error
 }
 

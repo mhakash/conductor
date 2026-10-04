@@ -1,6 +1,8 @@
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react'
 import { ChevronLeft, Network, Play, Plus } from 'lucide-react'
-import { useEffect, useEffectEvent } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
+import { useQueryClient } from '@tanstack/react-query'
+import { useEffect, useEffectEvent, useState } from 'react'
 import { Link, useBlocker, useParams } from 'react-router'
 import { toast } from 'sonner'
 
@@ -13,7 +15,12 @@ import { useBlockMap, useBlocks, type Block } from '@/features/blocks/api'
 import { isActive, type Run } from '@/features/runs/api'
 import { useRunWorkflow } from '@/features/runs/useRunWorkflow'
 import { StatusIcon } from '@/features/runs/StatusIcon'
-import { useUpdateWorkflow, useWorkflow, type Workflow } from '@/features/workflows/api'
+import {
+  fetchWorkflow,
+  useUpdateWorkflow,
+  useWorkflow,
+  type Workflow,
+} from '@/features/workflows/api'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { timeAgo } from '@/lib/time'
@@ -66,6 +73,7 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
   const dirty = useEditor((s) => s.dirty)
   const addStep = useEditor((s) => s.addStep)
   const update = useUpdateWorkflow(workflow.id)
+  const queryClient = useQueryClient()
   const runner = useRunWorkflow((problems) => useEditor.getState().setProblems(problems))
   const latest = useLatestRun(workflow.id)
   const { screenToFlowPosition, flowToScreenPosition, setCenter, getZoom, fitView } = useReactFlow()
@@ -85,21 +93,36 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
     )
   }
 
-  /** Saves the draft; resolves to false (and shows why) when it fails. */
-  const persist = async () => {
+  const [conflict, setConflict] = useState(false)
+
+  /**
+   * Saves the draft; resolves to false (and shows why) when it fails. Unless
+   * overwriting, the save is refused if the workflow changed elsewhere.
+   */
+  const persist = async (overwrite = false) => {
     const s = useEditor.getState()
     try {
-      await update.mutateAsync({
+      const saved = await update.mutateAsync({
         name: s.name,
         description: s.description,
         definition: toDefinition(s.nodes, s.edges, s.inputs),
+        updatedAt: overwrite ? undefined : (s.version ?? undefined),
       })
-      useEditor.getState().markSaved()
+      useEditor.getState().markSaved(saved.updatedAt)
       return true
     } catch (err) {
-      showProblems('Not saved', err as Error)
+      if (err instanceof ApiError && err.status === 409) setConflict(true)
+      else showProblems('Not saved', err as Error)
       return false
     }
+  }
+
+  const loadLatest = async () => {
+    const latest = await fetchWorkflow(workflow.id)
+    queryClient.setQueryData(['workflows', workflow.id], latest)
+    load(latest)
+    setConflict(false)
+    toast('Loaded the latest version')
   }
 
   const save = async () => {
@@ -232,6 +255,15 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
       </div>
 
       <UnsavedChangesGuard dirty={dirty} />
+      <ConflictDialog
+        open={conflict}
+        onOpenChange={setConflict}
+        onLoadLatest={() => void loadLatest()}
+        onOverwrite={async () => {
+          setConflict(false)
+          if (await persist(true)) toast.success('Saved over the other version')
+        }}
+      />
       {runner.dialog}
     </div>
   )
@@ -283,6 +315,45 @@ function LastRun({ run }: { run: Run | undefined }) {
       <StatusIcon status={run.status} className="size-3.5" />
       {isActive(run.status) ? 'Running now' : `Last run ${timeAgo(run.createdAt)}`}
     </Link>
+  )
+}
+
+/** Shown when saving would silently replace someone else's newer save. */
+function ConflictDialog({
+  open,
+  onOpenChange,
+  onLoadLatest,
+  onOverwrite,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onLoadLatest: () => void
+  onOverwrite: () => void
+}) {
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] data-[state=open]:animate-fade-in" />
+        <Dialog.Content className="fixed top-1/2 left-1/2 z-50 w-[calc(100vw-32px)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line-strong bg-raised p-5 shadow-2xl shadow-black/50 data-[state=open]:animate-pop-in">
+          <Dialog.Title className="text-sm font-medium text-fg">
+            This workflow changed somewhere else
+          </Dialog.Title>
+          <Dialog.Description className="mt-2 text-fg-muted">
+            It was saved from another tab or window after you opened it. Load that version to
+            continue from it (your unsaved edits here are discarded), or overwrite it with yours.
+          </Dialog.Description>
+          <div className="mt-5 flex flex-wrap justify-end gap-2">
+            <Dialog.Close asChild>
+              <Button variant="ghost">Keep editing</Button>
+            </Dialog.Close>
+            <Button variant="secondary" onClick={onOverwrite}>
+              Overwrite with mine
+            </Button>
+            <Button onClick={onLoadLatest}>Load latest</Button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
 

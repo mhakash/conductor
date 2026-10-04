@@ -102,21 +102,30 @@ func (s *Workflows) Create(ctx context.Context, w workflow.Workflow) (workflow.W
 }
 
 // Update replaces name, description and definition of an existing workflow.
-func (s *Workflows) Update(ctx context.Context, w workflow.Workflow) (workflow.Workflow, error) {
+func (s *Workflows) Update(ctx context.Context, w workflow.Workflow, ifUnchangedSince *time.Time) (workflow.Workflow, error) {
 	def, err := json.Marshal(w.Definition)
 	if err != nil {
 		return workflow.Workflow{}, fmt.Errorf("encode definition: %w", err)
 	}
 	w.UpdatedAt = s.now()
 
-	var created string
-	err = s.db.QueryRowContext(ctx, `
+	query := `
 		UPDATE workflows SET name = ?, description = ?, definition = ?, updated_at = ?
-		WHERE id = ?
-		RETURNING created_at`,
-		w.Name, w.Description, string(def), formatTime(w.UpdatedAt), w.ID,
-	).Scan(&created)
+		WHERE id = ?`
+	args := []any{w.Name, w.Description, string(def), formatTime(w.UpdatedAt), w.ID}
+	if ifUnchangedSince != nil {
+		query += ` AND updated_at = ?`
+		args = append(args, formatTime(*ifUnchangedSince))
+	}
+
+	var created string
+	err = s.db.QueryRowContext(ctx, query+` RETURNING created_at`, args...).Scan(&created)
 	if errors.Is(err, sql.ErrNoRows) {
+		if ifUnchangedSince != nil {
+			if _, getErr := s.Get(ctx, w.ID); getErr == nil {
+				return workflow.Workflow{}, workflow.ErrConflict
+			}
+		}
 		return workflow.Workflow{}, workflow.ErrNotFound
 	}
 	if err != nil {
