@@ -110,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 		})
 		r.Route("/runs", func(r chi.Router) {
 			r.Get("/", s.handleListRuns)
+			r.Post("/", s.handleStartScratchRun)
 			r.Get("/{id}", s.handleGetRun)
 			r.Get("/{id}/logs", s.handleRunLogs)
 			r.Get("/{id}/events", s.handleRunEvents)

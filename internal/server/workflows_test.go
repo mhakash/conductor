@@ -271,3 +271,54 @@ func TestSecretsAndInputsEndToEnd(t *testing.T) {
 		t.Errorf("outputs/config = %s", out)
 	}
 }
+
+func TestScratchRun(t *testing.T) {
+	srv := newTestServer(t)
+	def := workflow.EmptyDefinition()
+	def.Inputs = []workflow.Input{{Name: "who", Type: workflow.InputText}}
+	def.Steps = []workflow.Step{{ID: "hi", Block: "shell", Config: json.RawMessage(`{"command":"echo hi {{ inputs.who }}"}`)}}
+
+	var started run.Run
+	body := map[string]any{"workflow": map[string]any{"definition": def}, "inputs": map[string]any{"who": "there"}}
+	if code := do(t, "POST", srv.URL+"/api/runs", body, &started); code != http.StatusCreated {
+		t.Fatalf("start: status %d", code)
+	}
+	if started.WorkflowID != "" || started.WorkflowName != "Scratch" {
+		t.Errorf("started %+v", started)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	var got run.Run
+	for time.Now().Before(deadline) && !got.Status.Done() {
+		time.Sleep(20 * time.Millisecond)
+		do(t, "GET", srv.URL+"/api/runs/"+started.ID, nil, &got)
+	}
+	if got.Status != run.StatusSucceeded || !strings.Contains(string(got.Steps[0].Outputs), `"stdout":"hi there"`) {
+		t.Errorf("run %s, outputs %s", got.Status, got.Steps[0].Outputs)
+	}
+	var list []workflow.Summary
+	do(t, "GET", srv.URL+"/api/workflows", nil, &list)
+	if len(list) != 0 {
+		t.Errorf("a scratch run saved a workflow: %+v", list)
+	}
+
+	// A draft of a saved workflow runs as that workflow, unsaved.
+	var saved workflow.Workflow
+	do(t, "POST", srv.URL+"/api/workflows", map[string]any{"name": "Saved"}, &saved)
+	draft := map[string]any{"workflowId": saved.ID, "workflow": map[string]any{"name": "Saved", "definition": def}, "inputs": map[string]any{"who": "x"}}
+	if code := do(t, "POST", srv.URL+"/api/runs", draft, &started); code != http.StatusCreated || started.WorkflowID != saved.ID {
+		t.Errorf("draft run: status %d, workflow %q", code, started.WorkflowID)
+	}
+	var after workflow.Workflow
+	do(t, "GET", srv.URL+"/api/workflows/"+saved.ID, nil, &after)
+	if len(after.Definition.Steps) != 0 {
+		t.Errorf("running a draft saved it: %+v", after.Definition.Steps)
+	}
+
+	var res struct {
+		Problems []workflow.Problem `json:"problems"`
+	}
+	bad := map[string]any{"workflow": map[string]any{"definition": map[string]any{"schemaVersion": 1, "steps": []any{map[string]any{"id": "x", "block": "nope"}}}}}
+	if code := do(t, "POST", srv.URL+"/api/runs", bad, &res); code != http.StatusUnprocessableEntity || len(res.Problems) == 0 {
+		t.Errorf("invalid: status %d, %+v", code, res.Problems)
+	}
+}

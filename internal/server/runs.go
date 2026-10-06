@@ -31,6 +31,41 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, started)
 }
 
+// handleStartScratchRun runs a workflow sent in the request without saving
+// it: a test run of an editor's unsaved draft (given its workflowId, so the
+// run belongs to that workflow) or of the scratch workflow (no id).
+func (s *Server) handleStartScratchRun(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		WorkflowID string         `json:"workflowId"`
+		Workflow   workflowInput  `json:"workflow"`
+		Inputs     map[string]any `json:"inputs"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	wf := body.Workflow.toWorkflow()
+	if wf.Name == "" {
+		wf.Name = "Scratch"
+	}
+	if body.WorkflowID != "" {
+		if _, err := s.workflows.Get(r.Context(), body.WorkflowID); err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		wf.ID = body.WorkflowID
+	}
+	if err := s.validate(r.Context(), wf); err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	started, err := s.engine.Start(r.Context(), wf, body.Inputs)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, started)
+}
+
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	list, err := s.runs.List(r.Context(), run.ListFilter{

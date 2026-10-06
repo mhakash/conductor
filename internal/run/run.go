@@ -38,7 +38,8 @@ func (s Status) Done() bool {
 // Run is one execution of a workflow. It keeps a snapshot of the definition it
 // ran, so later edits to the workflow don't rewrite history.
 type Run struct {
-	ID           string              `json:"id"`
+	ID string `json:"id"`
+	// WorkflowID is empty for a scratch run of a workflow that isn't saved.
 	WorkflowID   string              `json:"workflowId"`
 	WorkflowName string              `json:"workflowName"`
 	Definition   workflow.Definition `json:"definition"`
