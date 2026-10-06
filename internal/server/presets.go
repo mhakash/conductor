@@ -42,7 +42,7 @@ func (s *Server) handleCreatePreset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := in.toPreset()
-	if err := preset.Validate(p, s.blocks.Has); err != nil {
+	if err := preset.Validate(p, s.blocks); err != nil {
 		s.presetError(w, r, err)
 		return
 	}
@@ -61,7 +61,7 @@ func (s *Server) handleUpdatePreset(w http.ResponseWriter, r *http.Request) {
 	}
 	p := in.toPreset()
 	p.ID = chi.URLParam(r, "id")
-	if err := preset.Validate(p, s.blocks.Has); err != nil {
+	if err := preset.Validate(p, s.blocks); err != nil {
 		s.presetError(w, r, err)
 		return
 	}

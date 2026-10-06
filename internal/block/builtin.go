@@ -4,7 +4,7 @@ import "conductor/internal/workflow"
 
 // Builtin returns the blocks that ship with Conductor.
 func Builtin() *Registry {
-	return NewRegistry(Shell, HTTP, Approval, Workflow)
+	return NewRegistry(Shell, Script, HTTP, Approval, Workflow)
 }
 
 // Workflow runs another workflow as one step. Like Approval it has no
@@ -71,13 +71,92 @@ var Shell = Block{
 			Help:    "Runs as a login shell, so PATH matches your terminal.",
 		},
 		{Key: "env", Label: "Environment variables", Type: FieldKeyValue},
+		imageField,
 	},
-	Outputs: []Output{
-		{Key: "stdout", Description: "Standard output, trimmed"},
-		{Key: "stderr", Description: "Standard error, trimmed"},
-		{Key: "exitCode", Description: "Process exit code"},
+	Outputs: processOutputs,
+	Run:     runShell,
+}
+
+// imageField runs a shell or script step in a container instead of on the
+// host (ADR 0008).
+var imageField = Field{
+	Key: "image", Label: "Docker image", Type: FieldText,
+	Placeholder: "python:3.13-slim",
+	Help:        "Runs the step in a fresh container of this image instead of on your machine. Only the working directory, if you set one, is mounted (at /work).",
+}
+
+var processOutputs = []Output{
+	{Key: "stdout", Description: "Standard output, trimmed"},
+	{Key: "stderr", Description: "Standard error, trimmed"},
+	{Key: "exitCode", Description: "Process exit code"},
+	{Key: "result", Description: "JSON the step wrote to the file named by $" + OutputsEnv},
+}
+
+var Script = Block{
+	Type:        "script",
+	Name:        "Script",
+	Description: "Run Python, Node, Bash or Go code written here. Pass data in through environment variables.",
+	Category:    "System",
+	Icon:        "code",
+	Fields: []Field{
+		{
+			Key: "language", Label: "Language", Type: FieldSelect, Default: "python",
+			Options: []Option{{"python", "Python"}, {"node", "Node.js"}, {"bash", "Bash"}, {"go", "Go"}},
+			Help:    "Runs python3, node, bash or go run from your PATH, or from the Docker image.",
+		},
+		{
+			Key: "code", Label: "Code", Type: FieldCode, Required: true, Literal: true,
+			LanguageFrom: "language", Placeholders: scriptPlaceholders,
+			Help: "Taken as written: use environment variables, not {{ }}, to bring in values. Write JSON to the file named by $" + OutputsEnv + " to return it as result.",
+		},
+		{
+			Key: "env", Label: "Environment variables", Type: FieldKeyValue,
+			Help: "Values may use {{ }}, e.g. VERSION = {{ inputs.version }}.",
+		},
+		{
+			Key: "workdir", Label: "Working directory", Type: FieldText,
+			Placeholder: "~/code/my-service",
+			Help:        "Defaults to your home directory.",
+		},
+		imageField,
 	},
-	Run: runShell,
+	Outputs: processOutputs,
+	Run:     runScript,
+}
+
+var scriptPlaceholders = map[string]string{
+	"python": `import json, os
+
+version = os.environ["VERSION"]
+print(f"releasing {version}")
+
+with open(os.environ["CONDUCTOR_OUTPUTS"], "w") as f:
+    json.dump({"tag": f"v{version}"}, f)`,
+	"node": `import { writeFileSync } from 'node:fs'
+
+const version = process.env.VERSION
+console.log(` + "`releasing ${version}`" + `)
+
+writeFileSync(process.env.CONDUCTOR_OUTPUTS, JSON.stringify({ tag: ` + "`v${version}`" + ` }))`,
+	"bash": `set -euo pipefail
+
+echo "releasing $VERSION"
+printf '{"tag": "v%s"}' "$VERSION" > "$CONDUCTOR_OUTPUTS"`,
+	"go": `package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+func main() {
+	version := os.Getenv("VERSION")
+	fmt.Println("releasing", version)
+
+	out, _ := json.Marshal(map[string]string{"tag": "v" + version})
+	os.WriteFile(os.Getenv("CONDUCTOR_OUTPUTS"), out, 0o644)
+}`,
 }
 
 var HTTP = Block{

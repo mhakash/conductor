@@ -51,7 +51,7 @@ type Repository interface {
 
 // Validate checks a preset as it would be checked as a step: a known block,
 // valid settings and expressions that compile.
-func Validate(p Preset, blockExists func(string) bool) error {
+func Validate(p Preset, blocks workflow.Blocks) error {
 	var problems []workflow.Problem
 	add := func(format string, args ...any) {
 		problems = append(problems, workflow.Problem{Message: fmt.Sprintf(format, args...)})
@@ -62,7 +62,7 @@ func Validate(p Preset, blockExists func(string) bool) error {
 	case len(name) > 200:
 		add("name is longer than 200 characters")
 	}
-	if !blockExists(p.Block) {
+	if !blocks.Has(p.Block) {
 		add("unknown block %q", p.Block)
 	}
 	if p.Step.Timeout != "" {
@@ -74,7 +74,7 @@ func Validate(p Preset, blockExists func(string) bool) error {
 	for _, pr := range workflow.ValidateSettings(workflow.Step{ID: "preset", Retry: p.Step.Retry}) {
 		problems = append(problems, workflow.Problem{Message: strings.TrimPrefix(pr.Message, `step "preset": `)})
 	}
-	refs, err := tmpl.ConfigRefs(p.Step.Config)
+	refs, err := tmpl.ConfigRefs(p.Step.Config, blocks.Literal(p.Block)...)
 	if err != nil {
 		add("config: %v", err)
 	}

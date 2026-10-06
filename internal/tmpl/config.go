@@ -8,8 +8,9 @@ import (
 )
 
 // RenderConfig evaluates the expressions in every string of a JSON config
-// (nested objects and arrays included; object keys are left alone).
-func RenderConfig(raw json.RawMessage, env map[string]any) (json.RawMessage, error) {
+// (nested objects and arrays included; object keys are left alone). Values of
+// the top-level keys in literal are taken as written, like a script's code.
+func RenderConfig(raw json.RawMessage, env map[string]any, literal ...string) (json.RawMessage, error) {
 	if len(raw) == 0 {
 		return raw, nil
 	}
@@ -17,7 +18,7 @@ func RenderConfig(raw json.RawMessage, env map[string]any) (json.RawMessage, err
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return nil, fmt.Errorf("config is not valid JSON: %w", err)
 	}
-	out, err := walk(v, "", func(path, s string) (string, error) {
+	out, err := walk(skip(v, literal), "", func(path, s string) (string, error) {
 		t, err := Compile(s)
 		if err != nil {
 			return "", fieldErr(path, err)
@@ -31,12 +32,13 @@ func RenderConfig(raw json.RawMessage, env map[string]any) (json.RawMessage, err
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(out)
+	return json.Marshal(restore(out, v, literal))
 }
 
 // ConfigRefs compiles every expression in a JSON config and returns what
 // they reference. It fails on the first expression that doesn't compile.
-func ConfigRefs(raw json.RawMessage) ([]Ref, error) {
+// Top-level keys in literal are skipped, as in RenderConfig.
+func ConfigRefs(raw json.RawMessage, literal ...string) ([]Ref, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -45,7 +47,7 @@ func ConfigRefs(raw json.RawMessage) ([]Ref, error) {
 		return nil, fmt.Errorf("config is not valid JSON: %w", err)
 	}
 	var refs []Ref
-	_, err := walk(v, "", func(path, s string) (string, error) {
+	_, err := walk(skip(v, literal), "", func(path, s string) (string, error) {
 		t, err := Compile(s)
 		if err != nil {
 			return "", fieldErr(path, err)
@@ -54,6 +56,36 @@ func ConfigRefs(raw json.RawMessage) ([]Ref, error) {
 		return s, nil
 	})
 	return refs, err
+}
+
+// skip returns v without the given top-level keys, if it is an object.
+func skip(v any, keys []string) any {
+	obj, ok := v.(map[string]any)
+	if !ok || len(keys) == 0 {
+		return v
+	}
+	out := make(map[string]any, len(obj))
+	for k, val := range obj {
+		if !slices.Contains(keys, k) {
+			out[k] = val
+		}
+	}
+	return out
+}
+
+// restore puts the skipped keys of orig back into the rendered value.
+func restore(rendered, orig any, keys []string) any {
+	obj, ok := rendered.(map[string]any)
+	src, _ := orig.(map[string]any)
+	if !ok {
+		return rendered
+	}
+	for _, k := range keys {
+		if val, ok := src[k]; ok {
+			obj[k] = val
+		}
+	}
+	return obj
 }
 
 // walk applies fn to every string containing an expression and returns the

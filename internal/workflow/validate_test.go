@@ -9,6 +9,12 @@ import (
 
 func known(string) bool { return true }
 
+// blockSet adapts a function saying which blocks exist; none has literal fields.
+type blockSet func(string) bool
+
+func (b blockSet) Has(typ string) bool   { return b(typ) }
+func (blockSet) Literal(string) []string { return nil }
+
 func wf(steps []string, edges ...Edge) Workflow {
 	def := EmptyDefinition()
 	for _, id := range steps {
@@ -165,7 +171,7 @@ func TestValidate(t *testing.T) {
 			if exists == nil {
 				exists = known
 			}
-			err := Validate(tt.w, exists)
+			err := Validate(tt.w, blockSet(exists))
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)

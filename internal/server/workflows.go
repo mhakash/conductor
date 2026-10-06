@@ -111,7 +111,7 @@ func (s *Server) handleUpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 // validate checks a workflow before it is saved, including the workflows
 // its steps run.
 func (s *Server) validate(ctx context.Context, wf workflow.Workflow) error {
-	if err := workflow.Validate(wf, s.blocks.Has); err != nil {
+	if err := workflow.Validate(wf, s.blocks); err != nil {
 		return err
 	}
 	return workflow.ValidateCalls(ctx, wf, s.workflows.Get)

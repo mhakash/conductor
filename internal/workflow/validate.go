@@ -34,10 +34,18 @@ var stepIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
 const maxNameLen = 200
 
+// Blocks is what validation needs to know about the available blocks.
+type Blocks interface {
+	Has(typ string) bool
+	// Literal lists the config keys of a block whose values are taken as
+	// written rather than searched for expressions, such as a script's code.
+	Literal(typ string) []string
+}
+
 // Validate checks the workflow's structure: names, step IDs, known blocks,
 // edge endpoints and the absence of cycles. Block configs are not checked
 // here; drafts may be incomplete until they run.
-func Validate(w Workflow, blockExists func(string) bool) error {
+func Validate(w Workflow, blocks Blocks) error {
 	var problems []Problem
 	add := func(p Problem) { problems = append(problems, p) }
 
@@ -65,7 +73,7 @@ func Validate(w Workflow, blockExists func(string) bool) error {
 		}
 		steps[s.ID] = true
 
-		if !blockExists(s.Block) {
+		if !blocks.Has(s.Block) {
 			add(Problem{Step: s.ID, Message: fmt.Sprintf("step %q uses unknown block %q", s.ID, s.Block)})
 		}
 		if s.Timeout != "" {
@@ -99,7 +107,7 @@ func Validate(w Workflow, blockExists func(string) bool) error {
 	}
 	// Expression references depend on the graph, so check them last.
 	if len(problems) == 0 {
-		problems = append(problems, checkExpressions(def)...)
+		problems = append(problems, checkExpressions(def, blocks)...)
 		problems = append(problems, checkOutputs(def, steps)...)
 	}
 
@@ -196,7 +204,7 @@ func findCycle(def Definition) []string {
 // finish before it starts (its ancestors), only inputs the workflow declares,
 // and `item` only when it runs once per item. Secrets are checked when a run
 // starts, since they live outside the workflow.
-func checkExpressions(def Definition) []Problem {
+func checkExpressions(def Definition, blocks Blocks) []Problem {
 	inputs := make(map[string]bool, len(def.Inputs))
 	for _, in := range def.Inputs {
 		inputs[in.Name] = true
@@ -208,7 +216,7 @@ func checkExpressions(def Definition) []Problem {
 		fail := func(format string, args ...any) {
 			problems = append(problems, Problem{Step: s.ID, Message: fmt.Sprintf("step %q", s.ID) + fmt.Sprintf(format, args...)})
 		}
-		refs, err := tmpl.ConfigRefs(s.Config)
+		refs, err := tmpl.ConfigRefs(s.Config, blocks.Literal(s.Block)...)
 		if err != nil {
 			fail(": %v", err)
 			continue

@@ -84,7 +84,7 @@ func testBlocks(c *concurrency) *block.Registry {
 		}
 		return map[string]any{"ok": true}, nil
 	}}
-	return block.NewRegistry(sleep, fail, panicky, echo, needs, emit, flaky, block.Approval, block.Workflow)
+	return block.NewRegistry(sleep, fail, panicky, echo, needs, emit, flaky, block.Approval, block.Workflow, block.Script)
 }
 
 type fixture struct {

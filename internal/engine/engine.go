@@ -301,7 +301,7 @@ func (e *Engine) loadSecrets(ctx context.Context, def workflow.Definition) (map[
 	users := map[string][]string{} // secret name → step ids
 	var names []string
 	for _, s := range def.Steps {
-		for _, r := range stepRefs(s) {
+		for _, r := range e.stepRefs(s) {
 			if r.Kind == "secrets" {
 				if users[r.Name] == nil {
 					names = append(names, r.Name)
@@ -336,8 +336,8 @@ func (e *Engine) loadSecrets(ctx context.Context, def workflow.Definition) (map[
 
 // stepRefs lists what a step's config, condition and list of items read.
 // The step must have passed validation.
-func stepRefs(s workflow.Step) []tmpl.Ref {
-	refs, _ := tmpl.ConfigRefs(s.Config)
+func (e *Engine) stepRefs(s workflow.Step) []tmpl.Ref {
+	refs, _ := tmpl.ConfigRefs(s.Config, e.blocks.Literal(s.Block)...)
 	for _, src := range []string{s.If, forEachItems(s)} {
 		if src == "" {
 			continue
@@ -412,7 +412,7 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 // problems, unknown blocks, missing required config and workflows it runs
 // that don't exist or would run it in turn.
 func (e *Engine) Check(ctx context.Context, wf workflow.Workflow) error {
-	if err := workflow.Validate(wf, e.blocks.Has); err != nil {
+	if err := workflow.Validate(wf, e.blocks); err != nil {
 		return err
 	}
 	if e.workflows != nil {

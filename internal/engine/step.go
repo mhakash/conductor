@@ -50,7 +50,7 @@ func (rn *runner) runStep(s workflow.Step, exprEnv map[string]any, resuming bool
 			}
 			env := maps.Clone(exprEnv)
 			env["item"], env["index"] = item, i
-			config, err := tmpl.RenderConfig(s.Config, env)
+			config, err := tmpl.RenderConfig(s.Config, env, rn.e.blocks.Literal(s.Block)...)
 			if err != nil {
 				setupErr = fmt.Errorf("item %d: config: %w", i+1, err)
 			}
@@ -62,7 +62,7 @@ func (rn *runner) runStep(s workflow.Step, exprEnv map[string]any, resuming bool
 		}
 		res.progress.Items = len(items)
 	} else {
-		config, err := tmpl.RenderConfig(s.Config, exprEnv)
+		config, err := tmpl.RenderConfig(s.Config, exprEnv, rn.e.blocks.Literal(s.Block)...)
 		if err != nil {
 			setupErr = fmt.Errorf("config: %w", err)
 			config = s.Config // record what we have
@@ -286,7 +286,7 @@ func evalItems(src string, env map[string]any) ([]any, error) {
 
 // startApproval records an approval step as waiting and waits for a decision.
 func (rn *runner) startApproval(s workflow.Step, exprEnv map[string]any) {
-	config, err := tmpl.RenderConfig(s.Config, exprEnv)
+	config, err := tmpl.RenderConfig(s.Config, exprEnv, rn.e.blocks.Literal(s.Block)...)
 	if err != nil {
 		config = s.Config
 	}

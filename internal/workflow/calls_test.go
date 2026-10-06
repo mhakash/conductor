@@ -82,7 +82,7 @@ func TestValidateOutputs(t *testing.T) {
 		w := wf([]string{"tag"})
 		w.Definition.Inputs = []Input{{Name: "owner", Type: InputText}}
 		w.Definition.Outputs = tt.outputs
-		err := Validate(w, known)
+		err := Validate(w, blockSet(known))
 		switch {
 		case tt.wantErr == "" && err != nil:
 			t.Errorf("%v: unexpected error %v", tt.outputs, err)

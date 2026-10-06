@@ -44,6 +44,14 @@ type Field struct {
 	Default     any       `json:"default,omitempty"`
 	Options     []Option  `json:"options,omitempty"`
 	Language    string    `json:"language,omitempty"`
+	// LanguageFrom names another field whose value is the code's language,
+	// for a code field whose language the user picks.
+	LanguageFrom string `json:"languageFrom,omitempty"`
+	// Placeholders replace Placeholder per value of the LanguageFrom field.
+	Placeholders map[string]string `json:"placeholders,omitempty"`
+	// Literal fields are taken as written: `{{` in them is not an
+	// expression. Code in languages that use braces needs this.
+	Literal bool `json:"literal,omitempty"`
 }
 
 type Output struct {
@@ -131,4 +139,16 @@ func (r *Registry) Get(typ string) (Block, bool) {
 func (r *Registry) Has(typ string) bool {
 	_, ok := r.Get(typ)
 	return ok
+}
+
+// Literal lists the keys of the block's literal fields.
+func (r *Registry) Literal(typ string) []string {
+	b, _ := r.Get(typ)
+	var keys []string
+	for _, f := range b.Fields {
+		if f.Literal {
+			keys = append(keys, f.Key)
+		}
+	}
+	return keys
 }

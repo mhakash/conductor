@@ -10,7 +10,7 @@ timestamps).
 
 - Saves are atomic: the editor sends the whole graph, the server validates it
   and replaces it. No partial-update bookkeeping.
-- The same document is what YAML import/export (phase 9) will read and write.
+- The same document is what a YAML import/export would read and write.
 - Runs (phase 2+) will snapshot the definition they executed, so editing a
   workflow never rewrites history.
 
