@@ -1,5 +1,6 @@
 import {
   Box,
+  Code,
   Globe,
   Hand,
   Terminal,
@@ -13,6 +14,7 @@ const icons: Record<string, LucideIcon> = {
   terminal: Terminal,
   globe: Globe,
   hand: Hand,
+  code: Code,
   workflow: Workflow,
 }
 

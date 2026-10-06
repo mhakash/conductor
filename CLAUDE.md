@@ -38,7 +38,9 @@ internal/config    flags + CONDUCTOR_* env vars
 internal/workflow  domain types, Repository interface, structural validation,
                    sub-workflow calls (calls.go)
 internal/preset    saved step configurations (presets) and their validation
-internal/block     block descriptors (fields, outputs) + executors (RunFunc); builtin registry
+internal/block     block descriptors (fields, outputs) + executors (RunFunc); builtin
+                   registry; process.go runs shell/script steps on the host or
+                   in Docker
 internal/run       run/step/log types and the run Repository interface
 internal/engine    DAG scheduler (execute.go), step attempts/loops/approvals
                    (step.go), sub-workflow child runs (subrun.go), batched
@@ -82,7 +84,12 @@ web/src/
   migrations go in `internal/store/migrations` as `NNNNN_name.sql`.
 - Adding a block = a `block.Block` (fields, outputs, `Run`) in
   `internal/block`; the UI renders its config form from the field list, no
-  frontend change needed. `Run` must honour ctx cancellation.
+  frontend change needed. `Run` must honour ctx cancellation. Commands go
+  through `runProcess` (process.go) for login-shell PATH, process groups,
+  `$CONDUCTOR_OUTPUTS` results and the Docker image option (ADR 0008).
+- Fields marked `Literal` (script code) are never treated as expressions;
+  pass `blocks.Literal(type)` to `tmpl.RenderConfig`/`ConfigRefs`.
+  `workflow.Validate` takes the registry for this.
 - Execution semantics (skip downstream on failure, timeouts, login shell,
   process groups) are in ADR 0003; conditions, retries, continue-on-error,
   loops and approvals in ADR 0006. Keep them in sync when changing the engine.
@@ -146,6 +153,8 @@ web/src/
 - Config text and code fields are CodeMirror (`fields/CodeField.tsx`) so they
   get `{{ }}` highlighting and completion; the completion scope is fed in via
   the `setExpressionScope` effect, not read from React during render.
+- Docker tests are skipped unless `CONDUCTOR_TEST_DOCKER=1`; they need the
+  `node:24-alpine` image already pulled.
 - The gitleaks pre-commit hook scans test fixtures too; use obviously fake
   values that don't look like real tokens.
 - A single run is kept fresh by `useRunStream` (SSE) writing into the query

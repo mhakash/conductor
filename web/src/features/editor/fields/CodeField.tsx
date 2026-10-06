@@ -1,4 +1,7 @@
+import { go } from '@codemirror/lang-go'
+import { javascript } from '@codemirror/lang-javascript'
 import { json } from '@codemirror/lang-json'
+import { python } from '@codemirror/lang-python'
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language'
 import { shell } from '@codemirror/legacy-modes/mode/shell'
 import { EditorView } from '@codemirror/view'
@@ -16,6 +19,9 @@ import {
 const languages: Record<string, () => Extension> = {
   shell: () => StreamLanguage.define(shell),
   json: () => json(),
+  python: () => python(),
+  javascript: () => javascript(),
+  go: () => go(),
 }
 
 const theme = EditorView.theme(
@@ -75,6 +81,11 @@ type CodeFieldProps = {
   singleLine?: boolean
   /** The whole value is one expression, written without {{ }}. Implies singleLine. */
   expression?: boolean
+  /** Taken as written: no {{ }} highlighting or completion. */
+  literal?: boolean
+  /** Fill the parent's height instead of growing with the content. */
+  fill?: boolean
+  autoFocus?: boolean
 }
 
 /**
@@ -89,6 +100,9 @@ export function CodeField({
   placeholder,
   singleLine,
   expression = false,
+  literal = false,
+  fill = false,
+  autoFocus,
 }: CodeFieldProps) {
   const oneLine = singleLine || expression
   const scope = useExpressionScope()
@@ -103,12 +117,12 @@ export function CodeField({
     return [
       theme,
       highlight,
-      expressionSupport({ bare: expression }),
+      ...(literal ? [] : [expressionSupport({ bare: expression })]),
       ...(oneLine ? [singleLineFilter, singleLineTheme] : [EditorView.lineWrapping]),
       ...(expression ? [expressionTheme] : []),
       ...(lang ? [lang()] : []),
     ]
-  }, [language, oneLine, expression])
+  }, [language, oneLine, expression, literal])
 
   return (
     <CodeMirror
@@ -121,8 +135,11 @@ export function CodeField({
       }}
       placeholder={placeholder}
       theme="none"
-      minHeight={oneLine ? undefined : '72px'}
-      maxHeight={oneLine ? undefined : '320px'}
+      autoFocus={autoFocus}
+      height={fill ? '100%' : undefined}
+      className={fill ? 'h-full' : undefined}
+      minHeight={oneLine || fill ? undefined : '72px'}
+      maxHeight={oneLine || fill ? undefined : '320px'}
       basicSetup={{
         lineNumbers: false,
         foldGutter: false,

@@ -33,12 +33,8 @@ Steps without a dependency path between them run in parallel.
       manual approval (survives restarts), loops over lists. See ADR 0006.
 - [x] **6 — Reuse.** Sub-workflows as steps (child runs, workflow outputs),
       saved block presets, a library. See ADR 0007.
-- [ ] **7 — Code execution.** Script blocks (Python, Node, Bash, Go) with an
-      in-app editor; optional per-step Docker isolation.
-- [ ] **8 — Integrations.** Git, GitLab, Jira, Confluence, Email. Target: the
-      "build preparation" workflow end to end.
-- [ ] **9 — Triggers.** Cron schedules, webhooks, notifications, YAML
-      import/export.
+- [x] **7 — Code execution.** Script blocks (Python, Node, Bash, Go) with an
+      in-app editor; optional per-step Docker isolation. See ADR 0008.
 
 ## Ideas parking lot
 

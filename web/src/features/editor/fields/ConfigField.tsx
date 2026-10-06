@@ -3,6 +3,7 @@ import type { Field } from '@/features/blocks/api'
 import { cn } from '@/lib/cn'
 
 import { CodeField } from './CodeField'
+import { ExpandableCodeField } from './ExpandableCodeField'
 import { KeyValueField } from './KeyValueField'
 import { CallInputsField, WorkflowField } from './WorkflowFields'
 
@@ -13,6 +14,9 @@ type ConfigFieldProps = {
   /** The step's whole config, for fields that depend on another (inputs on workflow). */
   config?: Record<string, unknown>
 }
+
+// Editor modes for the script block's languages; other values name a mode.
+const editorLanguages: Record<string, string> = { node: 'javascript', bash: 'shell' }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 
@@ -51,16 +55,21 @@ export function ConfigField({ field, value, onChange, config }: ConfigFieldProps
     <FormField label={field.label} htmlFor={id} required={field.required} help={field.help}>
       {(() => {
         switch (field.type) {
-          case 'code':
+          case 'code': {
+            const picked = field.languageFrom ? str(config?.[field.languageFrom]) : ''
+            const language = picked ? (editorLanguages[picked] ?? picked) : field.language
             return (
-              <CodeField
+              <ExpandableCodeField
                 id={id}
+                label={field.label}
                 value={str(value)}
                 onChange={onChange}
-                language={field.language}
-                placeholder={field.placeholder}
+                language={language}
+                placeholder={field.placeholders?.[picked] ?? field.placeholder}
+                literal={field.literal}
               />
             )
+          }
           case 'textarea':
             return (
               <Textarea

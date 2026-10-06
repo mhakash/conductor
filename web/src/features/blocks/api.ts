@@ -32,6 +32,12 @@ export type Field = {
   default?: unknown
   options?: { value: string; label: string }[]
   language?: string
+  /** Another field whose value is this code field's language. */
+  languageFrom?: string
+  /** Placeholder per value of the languageFrom field. */
+  placeholders?: Record<string, string>
+  /** Taken as written: `{{` in it is not an expression. */
+  literal?: boolean
 }
 
 export type Block = {
