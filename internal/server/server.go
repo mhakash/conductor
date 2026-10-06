@@ -88,6 +88,10 @@ func (s *Server) Handler() http.Handler {
 		r.Route("/workflows", func(r chi.Router) {
 			r.Get("/", s.handleListWorkflows)
 			r.Post("/", s.handleCreateWorkflow)
+			r.Post("/import", s.handleImportWorkflow)
+			r.Post("/to-yaml", s.handleToYAML)
+			r.Post("/from-yaml", s.handleFromYAML)
+			r.Get("/{id}/export", s.handleExportWorkflow)
 			r.Get("/{id}", s.handleGetWorkflow)
 			r.Put("/{id}", s.handleUpdateWorkflow)
 			r.Delete("/{id}", s.handleDeleteWorkflow)
