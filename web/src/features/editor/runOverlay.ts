@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo } from 'react'
 
-import { isActive, useRun, useRuns, type RunStatus } from '@/features/runs/api'
+import { isActive, useRun, useRuns, type Run, type RunStatus } from '@/features/runs/api'
 import { useRunStream } from '@/features/runs/stream'
 
 /** Step statuses from the workflow's most recent run, keyed by step id. */
@@ -16,9 +16,10 @@ export function useLatestRun(workflowId: string) {
   const run = useRun(latestId).data
   useRunStream(latestId ?? '', !!run && isActive(run.status))
 
-  const statuses = useMemo(
-    () => new Map((run?.steps ?? []).map((s) => [s.stepId, s.status])),
-    [run?.steps],
-  )
-  return { run, statuses }
+  return { run, statuses: useRunStatuses(run) }
+}
+
+/** A run's step statuses by step id. Doesn't keep the run live. */
+export function useRunStatuses(run: Run | undefined) {
+  return useMemo(() => new Map((run?.steps ?? []).map((s) => [s.stepId, s.status])), [run?.steps])
 }

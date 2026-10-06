@@ -20,6 +20,12 @@ export const router = createBrowserRouter([
           Component: (await import('@/features/editor/EditorPage')).EditorPage,
         }),
       },
+      {
+        path: 'scratch',
+        lazy: async () => ({
+          Component: (await import('@/features/editor/ScratchPage')).ScratchPage,
+        }),
+      },
       { path: 'runs', element: <RunsPage /> },
       { path: 'runs/:id', element: <RunPage /> },
       { path: 'library', element: <LibraryPage /> },

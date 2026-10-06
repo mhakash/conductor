@@ -71,7 +71,8 @@ web/src/
     blocks/        block descriptors from /api/blocks, icons
     editor/        canvas editor: Zustand store, graph helpers (tested), ELK
                    layout, library panel (library.ts, Palette.tsx), inspector,
-                   generated config fields
+                   generated config fields, test-run panel (RunPanel.tsx),
+                   scratch page (ScratchPage.tsx, scratch.ts)
     presets/       preset API hooks, save/rename dialog
     library/       Library page: presets and the block reference
     runs/          runs list, run page (live graph, steps, logs, outputs),
@@ -177,6 +178,8 @@ web/src/
 - In a hidden browser pane React Flow can't measure nodes, so they stay
   `visibility: hidden` and edges don't render. Verify canvases with the pane
   visible.
+- Test runs and scratch runs post the draft to `POST /api/runs` (ADR 0010);
+  the scratch draft lives in localStorage (`conductor.scratch`), not the DB.
 - The editor's unsaved-changes blocker reads `useEditor.getState().dirty` at
   navigation time; a boolean captured at render would block Run's
   save-then-navigate.

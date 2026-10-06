@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import type { Definition } from '@/features/workflows/api'
+import type { Definition, WorkflowFields } from '@/features/workflows/api'
 import { api } from '@/lib/api'
 
 export type RunStatus =
@@ -50,6 +50,7 @@ export type RunParent = {
 
 export type Run = {
   id: string
+  /** Empty for a scratch run: a workflow run without being saved. */
   workflowId: string
   workflowName: string
   definition: Definition
@@ -141,13 +142,22 @@ export function useRunLogs(id: string) {
 export function useStartRun() {
   const qc = useQueryClient()
   return useMutation({
+    /**
+     * Runs a saved workflow, or with `draft`, a workflow as given without
+     * saving it; the run belongs to `workflowId` if set (a test run).
+     */
     mutationFn: ({
       workflowId,
+      draft,
       inputs,
     }: {
-      workflowId: string
+      workflowId?: string
+      draft?: WorkflowFields
       inputs?: Record<string, unknown>
-    }) => api.post<Run>(`/workflows/${workflowId}/runs`, { inputs: inputs ?? {} }),
+    }) =>
+      draft
+        ? api.post<Run>('/runs', { workflowId, workflow: draft, inputs: inputs ?? {} })
+        : api.post<Run>(`/workflows/${workflowId}/runs`, { inputs: inputs ?? {} }),
     onSuccess: (run) => {
       qc.setQueryData(keys.one(run.id), run)
       void qc.invalidateQueries({ queryKey: keys.all })

@@ -4,7 +4,9 @@ import { Sidebar } from './Sidebar'
 
 export function AppShell() {
   // The editor needs the horizontal space for its palette, canvas and inspector.
-  const inEditor = useMatch('/workflows/:id') !== null
+  const workflow = useMatch('/workflows/:id')
+  const scratch = useMatch('/scratch')
+  const inEditor = workflow !== null || scratch !== null
 
   return (
     <div className="flex h-full">

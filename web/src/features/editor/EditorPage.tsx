@@ -1,9 +1,18 @@
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react'
-import { ChevronLeft, FileCode, Network, Play, Plus } from 'lucide-react'
+import {
+  ChevronLeft,
+  FileCode,
+  FlaskConical,
+  Network,
+  Play,
+  Plus,
+  Save,
+  Trash2,
+} from 'lucide-react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useEffectEvent, useMemo, useState } from 'react'
-import { Link, useBlocker, useParams } from 'react-router'
+import { Link, useBlocker, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/Button'
@@ -12,11 +21,12 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from '@/components/ui/Menu'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { BlockIcon } from '@/features/blocks/BlockIcon'
 import { useBlockMap, useBlocks } from '@/features/blocks/api'
-import { isActive, type Run } from '@/features/runs/api'
+import { isActive, useRun, type Run } from '@/features/runs/api'
 import { useRunWorkflow } from '@/features/runs/useRunWorkflow'
 import { StatusIcon } from '@/features/runs/StatusIcon'
 import {
   fetchWorkflow,
+  useCreateWorkflow,
   useUpdateWorkflow,
   useWorkflow,
   type Workflow,
@@ -31,7 +41,9 @@ import { Inspector } from './Inspector'
 import { useLibrary, type LibraryItem } from './library'
 import { animatePositions, layoutGraph } from './layout'
 import { Palette } from './Palette'
-import { RunOverlayContext, useLatestRun } from './runOverlay'
+import { RunOverlayContext, useLatestRun, useRunStatuses } from './runOverlay'
+import { RunPanel } from './RunPanel'
+import { clearScratch, saveScratch, saveScratchRun } from './scratch'
 import { useEditor } from './store'
 import { YamlDialog } from './YamlDialog'
 
@@ -68,7 +80,16 @@ export function EditorPage() {
   )
 }
 
-function Editor({ workflow }: { workflow: Workflow }) {
+type EditorProps = {
+  workflow: Workflow
+  /**
+   * Set for the scratch workflow, which is never saved: it is kept in the
+   * browser and run in place. runId is its last test run.
+   */
+  scratch?: { runId?: string; onCleared: () => void }
+}
+
+export function Editor({ workflow, scratch }: EditorProps) {
   const blockMap = useBlockMap()
   const library = useLibrary(workflow.id)
   const libraryMap = useMemo(() => new Map(library.map((i) => [i.key, i])), [library])
@@ -80,12 +101,59 @@ function Editor({ workflow }: { workflow: Workflow }) {
   const queryClient = useQueryClient()
   const runner = useRunWorkflow((problems) => useEditor.getState().setProblems(problems))
   const latest = useLatestRun(workflow.id)
+
+  // A test run runs the draft as it is, unsaved, and shows it here.
+  const [testRunId, setTestRunId] = useState(scratch?.runId)
+  const showTestRun = (id: string | undefined) => {
+    setTestRunId(id)
+    if (scratch) saveScratchRun(id)
+  }
+  const tester = useRunWorkflow(
+    (problems) => useEditor.getState().setProblems(problems),
+    (run) => showTestRun(run.id),
+  )
+  const testRunStatuses = useRunStatuses(useRun(testRunId).data)
+  const testRun = () => {
+    const s = useEditor.getState()
+    s.setProblems([])
+    tester.run({
+      workflowId: scratch ? undefined : workflow.id,
+      draft: {
+        name: s.name,
+        description: s.description,
+        definition: toDefinition(s.nodes, s.edges, s.inputs, s.outputs),
+      },
+      workflowName: s.name,
+      inputs: s.inputs,
+    })
+  }
   const { screenToFlowPosition, flowToScreenPosition, setCenter, getZoom, fitView } = useReactFlow()
 
   // Load once per workflow; later refetches must not clobber the draft.
   useEffect(() => {
     load(workflow)
   }, [workflow.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The scratch workflow is kept in the browser as it is edited.
+  const scratchMode = !!scratch
+  useEffect(() => {
+    if (!scratchMode) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const unsubscribe = useEditor.subscribe((s) => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        saveScratch({
+          name: s.name,
+          description: s.description,
+          definition: toDefinition(s.nodes, s.edges, s.inputs, s.outputs),
+        })
+      }, 300)
+    })
+    return () => {
+      clearTimeout(timer)
+      unsubscribe()
+    }
+  }, [scratchMode])
 
   const showProblems = (prefix: string, err: Error) => {
     const problems = err instanceof ApiError ? err.problems : []
@@ -134,6 +202,26 @@ function Editor({ workflow }: { workflow: Workflow }) {
     if (await persist()) toast.success('Saved')
   }
 
+  // Turns the scratch workflow into a saved one and opens it.
+  const create = useCreateWorkflow()
+  const navigate = useNavigate()
+  const saveScratchAsWorkflow = async () => {
+    const s = useEditor.getState()
+    try {
+      const wf = await create.mutateAsync({
+        name: s.name,
+        description: s.description,
+        definition: toDefinition(s.nodes, s.edges, s.inputs, s.outputs),
+      })
+      clearScratch()
+      toast.success(`Saved “${wf.name}”`)
+      navigate(`/workflows/${wf.id}`)
+    } catch (err) {
+      showProblems('Not saved', err as Error)
+    }
+  }
+  const [clearing, setClearing] = useState(false)
+
   // Runs execute the saved workflow, so unsaved edits are saved first.
   const runWorkflow = async () => {
     if (useEditor.getState().dirty && !(await persist())) return
@@ -142,7 +230,7 @@ function Editor({ workflow }: { workflow: Workflow }) {
   }
 
   const onKey = useEffectEvent((e: KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's' && !scratch) {
       e.preventDefault()
       void save()
     }
@@ -214,8 +302,19 @@ function Editor({ workflow }: { workflow: Workflow }) {
           </Link>
         </Tooltip>
         <NameInput />
-        <SaveState dirty={dirty} saving={update.isPending} />
-        <LastRun run={latest.run} />
+        {scratch ? (
+          <span
+            className="hidden items-center gap-1.5 rounded-full bg-hover px-2 py-0.5 text-xs text-fg-muted sm:flex"
+            title="Kept in this browser, not saved to Conductor. Runs don't save it either."
+          >
+            <FlaskConical className="size-3" /> Scratch · not saved
+          </span>
+        ) : (
+          <>
+            <SaveState dirty={dirty} saving={update.isPending} />
+            <LastRun run={latest.run} />
+          </>
+        )}
 
         <div className="ml-auto flex items-center gap-1.5">
           <Menu>
@@ -244,27 +343,75 @@ function Editor({ workflow }: { workflow: Workflow }) {
             <Network className="size-3.5" />
             <span className="hidden sm:inline">Tidy up</span>
           </Button>
-          <Button variant="secondary" onClick={save} disabled={update.isPending}>
-            Save
-            <kbd className="hidden font-sans text-[11px] text-fg-subtle sm:inline">⌘S</kbd>
-          </Button>
-          <Button onClick={runWorkflow} disabled={update.isPending || runner.pending}>
-            <Play className="size-3" fill="currentColor" />
-            Run
-          </Button>
+          {scratch ? (
+            <>
+              <Button variant="ghost" onClick={() => setClearing(true)}>
+                <Trash2 className="size-3.5" />
+                <span className="hidden sm:inline">Clear</span>
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={saveScratchAsWorkflow}
+                disabled={create.isPending}
+              >
+                <Save className="size-3.5" />
+                <span className="hidden sm:inline">Save as workflow</span>
+              </Button>
+              <Button onClick={testRun} disabled={tester.pending}>
+                <Play className="size-3" fill="currentColor" />
+                Run
+              </Button>
+            </>
+          ) : (
+            <>
+              <Tooltip label="Run the workflow as it is now, without saving it" side="bottom">
+                <Button variant="ghost" onClick={testRun} disabled={tester.pending}>
+                  <FlaskConical className="size-3.5" />
+                  <span className="hidden sm:inline">Test run</span>
+                </Button>
+              </Tooltip>
+              <Button variant="secondary" onClick={save} disabled={update.isPending}>
+                Save
+                <kbd className="hidden font-sans text-[11px] text-fg-subtle sm:inline">⌘S</kbd>
+              </Button>
+              <Button onClick={runWorkflow} disabled={update.isPending || runner.pending}>
+                <Play className="size-3" fill="currentColor" />
+                Run
+              </Button>
+            </>
+          )}
         </div>
       </header>
 
       <div className="flex min-h-0 flex-1">
         <Palette items={library} onAdd={addFromPalette} />
-        <RunOverlayContext.Provider value={latest.statuses}>
-          <Canvas items={libraryMap} />
-        </RunOverlayContext.Provider>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <RunOverlayContext.Provider value={testRunId ? testRunStatuses : latest.statuses}>
+            <Canvas items={libraryMap} />
+          </RunOverlayContext.Provider>
+          {testRunId && <RunPanel runId={testRunId} onClose={() => showTestRun(undefined)} />}
+        </div>
         <Inspector blocks={blockMap} />
       </div>
 
       <YamlDialog open={yamlOpen} onOpenChange={setYamlOpen} />
-      <UnsavedChangesGuard dirty={dirty} />
+      {scratch ? (
+        <ConfirmDialog
+          open={clearing}
+          onOpenChange={setClearing}
+          title="Clear the scratch workflow?"
+          description="Its steps, inputs and outputs are removed. Runs already made stay in Runs."
+          confirmLabel="Clear"
+          destructive
+          onConfirm={() => {
+            clearScratch()
+            setClearing(false)
+            scratch.onCleared()
+          }}
+        />
+      ) : (
+        <UnsavedChangesGuard dirty={dirty} />
+      )}
       <ConflictDialog
         open={conflict}
         onOpenChange={setConflict}
@@ -275,6 +422,7 @@ function Editor({ workflow }: { workflow: Workflow }) {
         }}
       />
       {runner.dialog}
+      {tester.dialog}
     </div>
   )
 }

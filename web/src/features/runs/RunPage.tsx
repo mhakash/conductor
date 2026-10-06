@@ -210,9 +210,13 @@ function RunHeader({ run, took, live }: { run: Run; took: number | null; live: b
   const active = isActive(run.status)
 
   // Runs again with the same inputs, shown for review when there are any.
+  // A scratch run has no saved workflow, so its snapshot runs again.
   const runAgain = () =>
     runner.run({
-      workflowId: run.workflowId,
+      workflowId: run.workflowId || undefined,
+      draft: run.workflowId
+        ? undefined
+        : { name: run.workflowName, description: '', definition: run.definition },
       workflowName: run.workflowName,
       inputs: run.definition.inputs ?? [],
       initial: run.inputs,
@@ -260,11 +264,13 @@ function RunHeader({ run, took, live }: { run: Run; took: number | null; live: b
 
       <div className="ml-auto flex items-center gap-1.5">
         <Link
-          to={`/workflows/${run.workflowId}`}
+          to={run.workflowId ? `/workflows/${run.workflowId}` : '/scratch'}
           className="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-[13px] font-medium text-fg-muted hover:bg-hover hover:text-fg"
         >
           <WorkflowIcon className="size-3.5" />
-          <span className="hidden sm:inline">Open workflow</span>
+          <span className="hidden sm:inline">
+            {run.workflowId ? 'Open workflow' : 'Open scratch'}
+          </span>
         </Link>
         {active ? (
           <Button

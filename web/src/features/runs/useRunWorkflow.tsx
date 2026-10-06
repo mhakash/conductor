@@ -2,25 +2,32 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
 
-import type { WorkflowInput } from '@/features/workflows/api'
+import type { WorkflowFields, WorkflowInput } from '@/features/workflows/api'
 import { ApiError, type Problem } from '@/lib/api'
 
-import { useStartRun } from './api'
+import { useStartRun, type Run } from './api'
 import { StartRunDialog } from './StartRunDialog'
 
 type Target = {
-  workflowId: string
+  /** The saved workflow to run; omitted when running `draft`. */
+  workflowId?: string
+  /** A workflow to run without saving it. */
+  draft?: WorkflowFields
   workflowName: string
   inputs: WorkflowInput[]
   initial?: Record<string, unknown>
 }
 
 /**
- * Starts a run and opens it. Workflows with inputs ask for them first.
- * Problems tied to a step go to `onStepProblems` (the editor highlights
- * them); everything else is shown in the dialog or a toast.
+ * Starts a run and opens it, or hands it to `onStarted` to show in place.
+ * Workflows with inputs ask for them first. Problems tied to a step go to
+ * `onStepProblems` (the editor highlights them); everything else is shown in
+ * the dialog or a toast.
  */
-export function useRunWorkflow(onStepProblems?: (problems: Problem[]) => void) {
+export function useRunWorkflow(
+  onStepProblems?: (problems: Problem[]) => void,
+  onStarted?: (run: Run) => void,
+) {
   const start = useStartRun()
   const navigate = useNavigate()
   const [target, setTarget] = useState<Target | null>(null)
@@ -28,9 +35,10 @@ export function useRunWorkflow(onStepProblems?: (problems: Problem[]) => void) {
 
   const submit = async (t: Target, inputs: Record<string, unknown>) => {
     try {
-      const run = await start.mutateAsync({ workflowId: t.workflowId, inputs })
+      const run = await start.mutateAsync({ workflowId: t.workflowId, draft: t.draft, inputs })
       setTarget(null)
-      navigate(`/runs/${run.id}`)
+      if (onStarted) onStarted(run)
+      else navigate(`/runs/${run.id}`)
     } catch (err) {
       const problems = err instanceof ApiError ? err.problems : []
       const stepProblems = problems.filter((p) => p.step)

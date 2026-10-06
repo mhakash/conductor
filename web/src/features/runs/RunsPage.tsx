@@ -56,6 +56,11 @@ function RunRow({ run, index }: { run: RunSummary; index: number }) {
         >
           {run.workflowName}
         </Link>
+        {!run.workflowId && (
+          <span className="ml-2 rounded-full bg-hover px-1.5 py-0.5 text-[11px] text-fg-subtle">
+            scratch
+          </span>
+        )}
         <p className="truncate text-xs text-fg-subtle">
           {statusLabel(run.status)}
           {run.error && ` · ${run.error}`}
