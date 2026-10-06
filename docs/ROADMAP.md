@@ -12,7 +12,7 @@ the previous one. Scope inside a phase can shift; the order is what matters.
 | Workflow     | A directed acyclic graph of steps; edges are dependencies                                |
 | Sub-workflow | A saved workflow used as a single step inside another workflow                           |
 | Run          | One execution of a workflow, with per-step status, logs, outputs and timings             |
-| Expression   | `{{ steps.tag.outputs.version }}` — references inputs, secrets and upstream outputs     |
+| Expression   | `{{ steps.tag.outputs.version }}` — references inputs, secrets and upstream outputs      |
 
 Steps without a dependency path between them run in parallel.
 
@@ -31,7 +31,8 @@ Steps without a dependency path between them run in parallel.
       secrets.
 - [x] **5 — Control flow.** Conditions/branches, retries, continue-on-error,
       manual approval (survives restarts), loops over lists. See ADR 0006.
-- [ ] **6 — Reuse.** Sub-workflows as steps, saved block presets, a library.
+- [x] **6 — Reuse.** Sub-workflows as steps (child runs, workflow outputs),
+      saved block presets, a library. See ADR 0007.
 - [ ] **7 — Code execution.** Script blocks (Python, Node, Bash, Go) with an
       in-app editor; optional per-step Docker isolation.
 - [ ] **8 — Integrations.** Git, GitLab, Jira, Confluence, Email. Target: the

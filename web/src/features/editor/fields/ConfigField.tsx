@@ -4,16 +4,19 @@ import { cn } from '@/lib/cn'
 
 import { CodeField } from './CodeField'
 import { KeyValueField } from './KeyValueField'
+import { CallInputsField, WorkflowField } from './WorkflowFields'
 
 type ConfigFieldProps = {
   field: Field
   value: unknown
   onChange: (value: unknown) => void
+  /** The step's whole config, for fields that depend on another (inputs on workflow). */
+  config?: Record<string, unknown>
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 
-export function ConfigField({ field, value, onChange }: ConfigFieldProps) {
+export function ConfigField({ field, value, onChange, config }: ConfigFieldProps) {
   const id = `field-${field.key}`
 
   if (field.type === 'boolean') {
@@ -93,6 +96,17 @@ export function ConfigField({ field, value, onChange }: ConfigFieldProps) {
             return (
               <KeyValueField
                 id={id}
+                value={(value as Record<string, string> | undefined) ?? {}}
+                onChange={onChange}
+              />
+            )
+          case 'workflow':
+            return <WorkflowField id={id} value={str(value)} onChange={onChange} />
+          case 'inputs':
+            return (
+              <CallInputsField
+                id={id}
+                workflowId={config?.workflow as string | undefined}
                 value={(value as Record<string, string> | undefined) ?? {}}
                 onChange={onChange}
               />

@@ -10,16 +10,15 @@ import {
 } from '@xyflow/react'
 import type { DragEvent } from 'react'
 
-import type { Block } from '@/features/blocks/api'
-
 import { edgeId, wouldCreateCycle } from './graph'
-import { BLOCK_DRAG_TYPE } from './Palette'
+import type { LibraryItem } from './library'
+import { LIBRARY_DRAG_TYPE } from './Palette'
 import { StepNodeView } from './StepNodeView'
 import { useEditor } from './store'
 
 const nodeTypes = { step: StepNodeView }
 
-export function Canvas({ blocks }: { blocks: Map<string, Block> }) {
+export function Canvas({ items }: { items: Map<string, LibraryItem> }) {
   const nodes = useEditor((s) => s.nodes)
   const edges = useEditor((s) => s.edges)
   const onNodesChange = useEditor((s) => s.onNodesChange)
@@ -35,18 +34,18 @@ export function Canvas({ blocks }: { blocks: Map<string, Block> }) {
   }
 
   const onDragOver = (e: DragEvent) => {
-    if (!e.dataTransfer.types.includes(BLOCK_DRAG_TYPE)) return
+    if (!e.dataTransfer.types.includes(LIBRARY_DRAG_TYPE)) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
   }
 
   const onDrop = (e: DragEvent) => {
-    const block = blocks.get(e.dataTransfer.getData(BLOCK_DRAG_TYPE))
-    if (!block) return
+    const item = items.get(e.dataTransfer.getData(LIBRARY_DRAG_TYPE))
+    if (!item) return
     e.preventDefault()
     const p = screenToFlowPosition({ x: e.clientX, y: e.clientY })
     // Drop so the cursor sits near the node's header, not its corner.
-    addStep(block, { x: p.x - 40, y: p.y - 20 })
+    addStep(item.template, { x: p.x - 40, y: p.y - 20 })
   }
 
   return (
@@ -80,7 +79,8 @@ export function Canvas({ blocks }: { blocks: Map<string, Block> }) {
           <div className="max-w-xs rounded-xl border border-dashed border-line-strong px-5 py-4 text-center">
             <p className="font-medium text-fg">Add your first step</p>
             <p className="mt-1 text-fg-muted">
-              Drag a block from the left. Connect steps to make one wait for another.
+              Drag a block, preset or workflow from the left. Connect steps to make one wait for
+              another.
             </p>
           </div>
         </div>

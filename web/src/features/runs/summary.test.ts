@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import type { Step } from '@/features/workflows/api'
 
-import type { StepRun } from './api'
-import { stepSummary } from './summary'
+import type { RunSummary, StepRun } from './api'
+import { stepSummary, withChildWaits } from './summary'
 
 const def: Step = {
   id: 'poll',
@@ -37,5 +37,34 @@ describe('stepSummary', () => {
       'succeeded on attempt 3 of 4',
     )
     expect(stepSummary(run({ status: 'waiting' }), undefined)).toBe('Waiting for approval')
+  })
+})
+
+describe('withChildWaits', () => {
+  const child = (stepId: string, status: RunSummary['status']): RunSummary => ({
+    id: `${stepId}-${status}`,
+    workflowId: 'w',
+    workflowName: 'Release',
+    status,
+    stepCount: 1,
+    createdAt: '',
+    startedAt: null,
+    finishedAt: null,
+    parent: { runId: 'r', workflowName: 'Parent', stepId },
+  })
+  const steps = [run({ stepId: 'a' }), run({ stepId: 'b' }), run({ stepId: 'c' })]
+
+  it('shows a step as waiting when all its runs still going wait', () => {
+    const out = withChildWaits(steps, [
+      child('a', 'waiting'),
+      child('a', 'succeeded'),
+      child('b', 'waiting'),
+      child('b', 'running'),
+    ])
+    expect(out.map((s) => s.status)).toEqual(['waiting', 'running', 'running'])
+  })
+
+  it('returns the same steps when nothing waits', () => {
+    expect(withChildWaits(steps, [child('a', 'running')])).toBe(steps)
   })
 })

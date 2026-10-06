@@ -39,21 +39,37 @@ export type StepRun = {
   itemsDone?: number
 }
 
+/** The step that started a run, for a run of a workflow used as a step. */
+export type RunParent = {
+  runId: string
+  workflowName: string
+  stepId: string
+  /** Loop index, when the step runs once per item. */
+  item?: number
+}
+
 export type Run = {
   id: string
   workflowId: string
   workflowName: string
   definition: Definition
   inputs?: Record<string, unknown>
+  /** The workflow's outputs, once it has succeeded. */
+  outputs?: Record<string, unknown>
   status: RunStatus
   error?: string
   createdAt: string
   startedAt: string | null
   finishedAt: string | null
   steps: StepRun[]
+  parent?: RunParent
+  /** Runs started by this run's steps, oldest first. */
+  children: RunSummary[]
 }
 
-export type RunSummary = Omit<Run, 'definition' | 'steps' | 'inputs'> & { stepCount: number }
+export type RunSummary = Omit<Run, 'definition' | 'steps' | 'inputs' | 'outputs' | 'children'> & {
+  stepCount: number
+}
 
 export type LogLine = {
   seq: number
@@ -78,11 +94,17 @@ export const runKeys = {
 }
 const keys = runKeys
 
+/**
+ * Runs of one workflow, including those started by other runs; without a
+ * workflow, only runs that weren't (the others are listed on their parent).
+ */
 export function useRuns(workflowId?: string) {
   return useQuery({
     queryKey: keys.list(workflowId),
     queryFn: ({ signal }) =>
-      api.get<RunSummary[]>(`/runs${workflowId ? `?workflowId=${workflowId}` : ''}`, { signal }),
+      api.get<RunSummary[]>(`/runs?${workflowId ? `workflowId=${workflowId}` : 'topLevel=true'}`, {
+        signal,
+      }),
     refetchInterval: (q) => (q.state.data?.some((r) => isActive(r.status)) ? LIST_POLL_MS : false),
   })
 }
@@ -91,7 +113,9 @@ export function useRuns(workflowId?: string) {
 export function useWaitingRuns() {
   return useQuery({
     queryKey: [...keys.lists, 'waiting'],
-    queryFn: ({ signal }) => api.get<RunSummary[]>('/runs?status=waiting', { signal }),
+    // A run waiting inside another shows its parent as waiting; count that once.
+    queryFn: ({ signal }) =>
+      api.get<RunSummary[]>('/runs?status=waiting&topLevel=true', { signal }),
     refetchInterval: 5000,
   })
 }

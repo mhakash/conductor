@@ -1,10 +1,19 @@
-import { ChevronLeft, Hand, Play, Square, Workflow as WorkflowIcon } from 'lucide-react'
+import {
+  ArrowUpRight,
+  ChevronLeft,
+  CornerLeftUp,
+  Hand,
+  Play,
+  Square,
+  Workflow as WorkflowIcon,
+} from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/Button'
 import { Textarea } from '@/components/ui/Input'
+import { CALL_BLOCK } from '@/features/blocks/api'
 import type { Step } from '@/features/workflows/api'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -13,12 +22,14 @@ import { useNow } from '@/lib/useNow'
 
 import {
   isActive,
+  statusLabel,
   useCancelRun,
   useDecide,
   useRun,
   useRunLogs,
   type LogLine,
   type Run,
+  type RunSummary,
   type StepRun,
 } from './api'
 import { LogView } from './LogView'
@@ -26,7 +37,7 @@ import { RunGraph } from './RunGraph'
 import { useRunStream } from './stream'
 import { executionOrder } from './order'
 import { StatusBadge, StatusIcon } from './StatusIcon'
-import { stepSummary } from './summary'
+import { stepSummary, withChildWaits } from './summary'
 import { useRunWorkflow } from './useRunWorkflow'
 
 export function RunPage() {
@@ -64,7 +75,10 @@ function RunView({ run }: { run: Run }) {
   const select = (id: string) => setParams({ step: id }, { replace: true })
 
   const order = useMemo(() => executionOrder(run.definition), [run.definition])
-  const stepRuns = useMemo(() => new Map(run.steps.map((s) => [s.stepId, s])), [run.steps])
+  // Steps that run a workflow show as waiting while that run waits for approval.
+  const steps = useMemo(() => withChildWaits(run.steps, run.children), [run.steps, run.children])
+  const shown = useMemo(() => (steps === run.steps ? run : { ...run, steps }), [run, steps])
+  const stepRuns = useMemo(() => new Map(steps.map((s) => [s.stepId, s])), [steps])
   const defs = useMemo(
     () => new Map(run.definition.steps.map((s) => [s.id, s])),
     [run.definition.steps],
@@ -73,12 +87,12 @@ function RunView({ run }: { run: Run }) {
   // Explicit choice first; otherwise follow what's most interesting right now:
   // a failure, a step waiting for you, the step in progress, or — once done —
   // where the run ended.
-  const waiting = run.steps.find((s) => s.status === 'waiting')
+  const waiting = steps.find((s) => s.status === 'waiting')
   const selectedId =
     params.get('step') ??
-    run.steps.find((s) => s.status === 'failed' && !defs.get(s.stepId)?.continueOnError)?.stepId ??
+    steps.find((s) => s.status === 'failed' && !defs.get(s.stepId)?.continueOnError)?.stepId ??
     waiting?.stepId ??
-    run.steps.findLast((s) => s.status === 'running')?.stepId ??
+    steps.findLast((s) => s.status === 'running')?.stepId ??
     (active ? order[0]?.id : order.at(-1)?.id)
   const selected = selectedId ? stepRuns.get(selectedId) : undefined
 
@@ -88,17 +102,8 @@ function RunView({ run }: { run: Run }) {
     <div className="flex h-full flex-col">
       <RunHeader run={run} took={took} live={live} />
 
-      {run.inputs && Object.keys(run.inputs).length > 0 && (
-        <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line px-4 py-2 md:px-6">
-          <dt className="text-[11px] font-medium tracking-wide text-fg-subtle uppercase">Inputs</dt>
-          {Object.entries(run.inputs).map(([k, v]) => (
-            <dd key={k} className="font-mono text-xs">
-              <span className="text-fg-subtle">{k}=</span>
-              <span className="text-fg">{typeof v === 'string' ? v : JSON.stringify(v)}</span>
-            </dd>
-          ))}
-        </dl>
-      )}
+      <Values title="Inputs" values={run.inputs} />
+      <Values title="Outputs" values={run.outputs} />
 
       {run.error && (
         <p className="border-b border-line bg-coral/5 px-4 py-2.5 text-coral md:px-6">
@@ -123,7 +128,7 @@ function RunView({ run }: { run: Run }) {
         aria-label="Run graph"
         className="relative h-[40%] min-h-56 shrink-0 border-b border-line"
       >
-        <RunGraph run={run} selectedId={selectedId} onSelect={select} />
+        <RunGraph run={shown} selectedId={selectedId} onSelect={select} />
       </section>
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -171,12 +176,31 @@ function RunView({ run }: { run: Run }) {
               def={defs.get(selected.stepId)}
               runId={run.id}
               lines={(logs.data ?? []).filter((l) => l.stepId === selected.stepId)}
+              subRuns={run.children
+                .filter((c) => c.parent?.stepId === selected.stepId)
+                .sort((a, b) => (a.parent?.item ?? 0) - (b.parent?.item ?? 0))}
               now={now}
             />
           )}
         </section>
       </div>
     </div>
+  )
+}
+
+/** A run's inputs or outputs, on one line under the header. */
+function Values({ title, values }: { title: string; values: Record<string, unknown> | undefined }) {
+  if (!values || Object.keys(values).length === 0) return null
+  return (
+    <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line px-4 py-2 md:px-6">
+      <dt className="text-[11px] font-medium tracking-wide text-fg-subtle uppercase">{title}</dt>
+      {Object.entries(values).map(([k, v]) => (
+        <dd key={k} className="max-w-full truncate font-mono text-xs">
+          <span className="text-fg-subtle">{k}=</span>
+          <span className="text-fg">{typeof v === 'string' ? v : JSON.stringify(v)}</span>
+        </dd>
+      ))}
+    </dl>
   )
 }
 
@@ -197,13 +221,26 @@ function RunHeader({ run, took, live }: { run: Run; took: number | null; live: b
   return (
     <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-3 py-2 md:px-4">
       <Link
-        to="/runs"
-        aria-label="All runs"
+        to={run.parent ? parentLink(run.parent) : '/runs'}
+        aria-label={run.parent ? `Back to ${run.parent.workflowName}` : 'All runs'}
         className="flex size-8 items-center justify-center rounded-md text-fg-muted hover:bg-hover hover:text-fg"
       >
         <ChevronLeft className="size-4" />
       </Link>
       <h1 className="text-sm font-medium text-fg">{run.workflowName}</h1>
+      {run.parent && (
+        <Link
+          to={parentLink(run.parent)}
+          className="flex items-center gap-1 text-xs text-fg-subtle hover:text-fg"
+        >
+          <CornerLeftUp className="size-3" />
+          Run by <span className="text-fg-muted">{run.parent.workflowName}</span>
+          <span className="font-mono">
+            · {run.parent.stepId}
+            {run.parent.item !== undefined && ` #${run.parent.item + 1}`}
+          </span>
+        </Link>
+      )}
       <StatusBadge status={run.status} />
       {live && (
         <span className="flex items-center gap-1.5 text-xs text-brass" title="Updating live">
@@ -242,7 +279,7 @@ function RunHeader({ run, took, live }: { run: Run; took: number | null; live: b
             <Square className="size-3" fill="currentColor" />
             Cancel run
           </Button>
-        ) : (
+        ) : run.parent ? null : (
           <Button onClick={runAgain} disabled={runner.pending}>
             <Play className="size-3" fill="currentColor" />
             Run again
@@ -254,6 +291,10 @@ function RunHeader({ run, took, live }: { run: Run; took: number | null; live: b
   )
 }
 
+function parentLink(p: NonNullable<Run['parent']>) {
+  return `/runs/${p.runId}?step=${p.stepId}`
+}
+
 type StepDetailProps = {
   step: StepRun
   name: string
@@ -261,10 +302,12 @@ type StepDetailProps = {
   def: Step | undefined
   runId: string
   lines: LogLine[]
+  /** Runs the step started, for a step that runs a workflow. */
+  subRuns: RunSummary[]
   now: number
 }
 
-function StepDetail({ step, name, block, def, runId, lines, now }: StepDetailProps) {
+function StepDetail({ step, name, block, def, runId, lines, subRuns, now }: StepDetailProps) {
   const d = elapsed(step.startedAt, step.finishedAt, now)
   const outputs = Object.entries(step.outputs ?? {})
   // The config after expressions were evaluated (secrets masked); one per
@@ -290,7 +333,7 @@ function StepDetail({ step, name, block, def, runId, lines, now }: StepDetailPro
         </span>
       </div>
 
-      {step.status === 'waiting' && (
+      {step.status === 'waiting' && block !== CALL_BLOCK && (
         <ApprovalCard
           runId={runId}
           stepId={step.stepId}
@@ -315,6 +358,12 @@ function StepDetail({ step, name, block, def, runId, lines, now }: StepDetailPro
             </span>
           )}
         </p>
+      )}
+
+      {block === CALL_BLOCK && subRuns.length > 0 && (
+        <Panel title={subRuns.length === 1 ? 'Run' : `Runs · ${subRuns.length}`}>
+          <ChildRuns runs={subRuns} now={now} />
+        </Panel>
       )}
 
       <Panel title="Logs">
@@ -345,6 +394,46 @@ function StepDetail({ step, name, block, def, runId, lines, now }: StepDetailPro
         </Panel>
       )}
     </div>
+  )
+}
+
+function ChildRuns({ runs, now }: { runs: RunSummary[]; now: number }) {
+  return (
+    <ul className="divide-y divide-line">
+      {runs.map((r) => {
+        const d = elapsed(r.startedAt, r.finishedAt, now)
+        return (
+          <li key={r.id} className="relative flex items-center gap-2.5 px-4 py-2.5 hover:bg-raised">
+            <StatusIcon status={r.status} />
+            <span className="min-w-0 flex-1">
+              <Link
+                to={`/runs/${r.id}`}
+                className="text-fg after:absolute after:inset-0 focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-brass"
+              >
+                {r.workflowName}
+                {r.parent?.item !== undefined && (
+                  <span className="ml-1.5 font-mono text-xs text-fg-subtle">
+                    #{r.parent.item + 1}
+                  </span>
+                )}
+              </Link>
+              <span
+                className={cn(
+                  'block truncate text-xs',
+                  r.status === 'waiting' ? 'text-brass' : 'text-fg-subtle',
+                )}
+              >
+                {r.error || statusLabel(r.status)}
+              </span>
+            </span>
+            <span className="font-mono text-[11px] text-fg-subtle tabular-nums">
+              {d !== null && formatDuration(d)}
+            </span>
+            <ArrowUpRight className="size-3.5 text-fg-subtle" />
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 

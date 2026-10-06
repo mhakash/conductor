@@ -1,15 +1,16 @@
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
-import { runKeys, type LogLine, type Run, type StepRun } from './api'
+import { runKeys, type LogLine, type Run, type RunSummary, type StepRun } from './api'
 
-type RunState = Pick<Run, 'status' | 'error' | 'startedAt' | 'finishedAt'>
+type RunState = Pick<Run, 'status' | 'outputs' | 'error' | 'startedAt' | 'finishedAt'>
 
 export type RunEvent =
   | { type: 'snapshot'; run: Run; lines?: LogLine[] }
   | { type: 'run'; state: RunState }
   | { type: 'step'; step: StepRun }
   | { type: 'logs'; lines: LogLine[] }
+  | { type: 'child'; child: RunSummary }
   | { type: 'end' }
 
 /** Appends lines newer than what we have; events may overlap after a reconnect. */
@@ -41,7 +42,19 @@ export function applyEvent(qc: QueryClient, id: string, e: RunEvent) {
     case 'logs':
       qc.setQueryData<LogLine[]>(runKeys.logs(id), (have = []) => mergeLines(have, e.lines))
       break
+    case 'child':
+      qc.setQueryData<Run>(
+        runKeys.one(id),
+        (r) => r && { ...r, children: upsert(r.children, e.child) },
+      )
+      break
   }
+}
+
+function upsert(children: RunSummary[], child: RunSummary): RunSummary[] {
+  return children.some((c) => c.id === child.id)
+    ? children.map((c) => (c.id === child.id ? child : c))
+    : [...children, child]
 }
 
 const RETRY_FIRST_MS = 1000

@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMemo } from 'react'
 
 import { api } from '@/lib/api'
 
@@ -52,9 +53,20 @@ export type WorkflowInput = {
   description?: string
 }
 
+/**
+ * A value a workflow hands back when it succeeds, to a workflow that runs it.
+ * `value` is an expression without {{ }}, evaluated after every step.
+ */
+export type WorkflowOutput = {
+  name: string
+  value: string
+  description?: string
+}
+
 export type Definition = {
   schemaVersion: number
   inputs?: WorkflowInput[]
+  outputs?: WorkflowOutput[]
   steps: Step[]
   edges: Edge[]
 }
@@ -68,7 +80,12 @@ export type Workflow = {
   updatedAt: string
 }
 
-export type WorkflowSummary = Omit<Workflow, 'definition'> & { stepCount: number }
+export type WorkflowSummary = Omit<Workflow, 'definition'> & {
+  stepCount: number
+  /** What a step running this workflow gives it and gets back. */
+  inputs: WorkflowInput[]
+  outputs: WorkflowOutput[]
+}
 
 export type WorkflowFields = Pick<Workflow, 'name' | 'description'> & {
   definition?: Definition
@@ -131,4 +148,9 @@ export function useDeleteWorkflow() {
       void qc.invalidateQueries({ queryKey: keys.all, exact: true })
     },
   })
+}
+
+export function useWorkflowMap() {
+  const { data } = useWorkflows()
+  return useMemo(() => new Map((data ?? []).map((w) => [w.id, w])), [data])
 }

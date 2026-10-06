@@ -1,4 +1,4 @@
-import { History, KeyRound, Workflow, type LucideIcon } from 'lucide-react'
+import { History, KeyRound, Library, Workflow, type LucideIcon } from 'lucide-react'
 import { motion } from 'motion/react'
 import { NavLink } from 'react-router'
 
@@ -12,6 +12,7 @@ type NavItem = { to: string; label: string; icon: LucideIcon }
 const nav: NavItem[] = [
   { to: '/workflows', label: 'Workflows', icon: Workflow },
   { to: '/runs', label: 'Runs', icon: History },
+  { to: '/library', label: 'Library', icon: Library },
   { to: '/secrets', label: 'Secrets', icon: KeyRound },
 ]
 

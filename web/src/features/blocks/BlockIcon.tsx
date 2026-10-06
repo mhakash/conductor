@@ -1,10 +1,19 @@
-import { Box, Globe, Hand, Terminal, type LucideIcon, type LucideProps } from 'lucide-react'
+import {
+  Box,
+  Globe,
+  Hand,
+  Terminal,
+  Workflow,
+  type LucideIcon,
+  type LucideProps,
+} from 'lucide-react'
 
 // Blocks name their icon; only icons in use are imported to keep the bundle small.
 const icons: Record<string, LucideIcon> = {
   terminal: Terminal,
   globe: Globe,
   hand: Hand,
+  workflow: Workflow,
 }
 
 export function BlockIcon({ name, ...props }: { name: string } & LucideProps) {

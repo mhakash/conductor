@@ -2,7 +2,7 @@ import { ReactFlowProvider, useReactFlow } from '@xyflow/react'
 import { ChevronLeft, Network, Play, Plus } from 'lucide-react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useEffectEvent, useState } from 'react'
+import { useEffect, useEffectEvent, useMemo, useState } from 'react'
 import { Link, useBlocker, useParams } from 'react-router'
 import { toast } from 'sonner'
 
@@ -11,7 +11,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Menu, MenuContent, MenuItem, MenuTrigger } from '@/components/ui/Menu'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { BlockIcon } from '@/features/blocks/BlockIcon'
-import { useBlockMap, useBlocks, type Block } from '@/features/blocks/api'
+import { useBlockMap, useBlocks } from '@/features/blocks/api'
 import { isActive, type Run } from '@/features/runs/api'
 import { useRunWorkflow } from '@/features/runs/useRunWorkflow'
 import { StatusIcon } from '@/features/runs/StatusIcon'
@@ -28,6 +28,7 @@ import { timeAgo } from '@/lib/time'
 import { Canvas } from './Canvas'
 import { findFreeSpot, NODE_SIZE, toDefinition } from './graph'
 import { Inspector } from './Inspector'
+import { useLibrary, type LibraryItem } from './library'
 import { animatePositions, layoutGraph } from './layout'
 import { Palette } from './Palette'
 import { RunOverlayContext, useLatestRun } from './runOverlay'
@@ -61,13 +62,15 @@ export function EditorPage() {
 
   return (
     <ReactFlowProvider>
-      <Editor key={workflow.data.id} workflow={workflow.data} blocks={blocks.data} />
+      <Editor key={workflow.data.id} workflow={workflow.data} />
     </ReactFlowProvider>
   )
 }
 
-function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
+function Editor({ workflow }: { workflow: Workflow }) {
   const blockMap = useBlockMap()
+  const library = useLibrary(workflow.id)
+  const libraryMap = useMemo(() => new Map(library.map((i) => [i.key, i])), [library])
   const load = useEditor((s) => s.load)
   const loaded = useEditor((s) => s.workflowId === workflow.id)
   const dirty = useEditor((s) => s.dirty)
@@ -105,7 +108,7 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
       const saved = await update.mutateAsync({
         name: s.name,
         description: s.description,
-        definition: toDefinition(s.nodes, s.edges, s.inputs),
+        definition: toDefinition(s.nodes, s.edges, s.inputs, s.outputs),
         updatedAt: overwrite ? undefined : (s.version ?? undefined),
       })
       useEditor.getState().markSaved(saved.updatedAt)
@@ -147,9 +150,9 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // Clicking a block appends it after the selected step, so a sequence can be
+  // Clicking an item appends it after the selected step, so a sequence can be
   // built by clicking alone. With nothing selected it lands mid-canvas.
-  const addFromPalette = (block: Block) => {
+  const addFromPalette = (item: LibraryItem) => {
     const { nodes } = useEditor.getState()
     const selected = nodes.filter((n) => n.selected)
     const anchor = selected.length === 1 ? selected[0] : null
@@ -166,7 +169,7 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
       desired = { x: c.x - NODE_SIZE.width / 2, y: c.y - NODE_SIZE.height / 2 }
     }
     const position = findFreeSpot(nodes, desired)
-    addStep(block, position, anchor?.id)
+    addStep(item.template, position, anchor?.id)
 
     // Keep the new step in view without changing the zoom.
     if (rect) {
@@ -220,13 +223,13 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
               </Button>
             </MenuTrigger>
             <MenuContent>
-              {blocks.map((b) => (
+              {library.map((item) => (
                 <MenuItem
-                  key={b.type}
-                  icon={<BlockIcon name={b.icon} className="size-3.5" />}
-                  onSelect={() => addFromPalette(b)}
+                  key={item.key}
+                  icon={<BlockIcon name={item.icon} className="size-3.5" />}
+                  onSelect={() => addFromPalette(item)}
                 >
-                  {b.name}
+                  {item.name}
                 </MenuItem>
               ))}
             </MenuContent>
@@ -247,9 +250,9 @@ function Editor({ workflow, blocks }: { workflow: Workflow; blocks: Block[] }) {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <Palette blocks={blocks} onAdd={addFromPalette} />
+        <Palette items={library} onAdd={addFromPalette} />
         <RunOverlayContext.Provider value={latest.statuses}>
-          <Canvas blocks={blockMap} />
+          <Canvas items={libraryMap} />
         </RunOverlayContext.Provider>
         <Inspector blocks={blockMap} />
       </div>

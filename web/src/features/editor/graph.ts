@@ -1,6 +1,13 @@
 import type { Edge as FlowEdge, Node, XYPosition } from '@xyflow/react'
 
-import type { Definition, Edge, Step, StepSettings, WorkflowInput } from '@/features/workflows/api'
+import type {
+  Definition,
+  Edge,
+  Step,
+  StepSettings,
+  WorkflowInput,
+  WorkflowOutput,
+} from '@/features/workflows/api'
 
 export const SCHEMA_VERSION = 1
 
@@ -43,6 +50,7 @@ export function toDefinition(
   nodes: StepNode[],
   edges: FlowEdge[],
   inputs: WorkflowInput[] = [],
+  outputs: WorkflowOutput[] = [],
 ): Definition {
   const steps: Step[] = nodes.map((n) => ({
     id: n.id,
@@ -55,12 +63,12 @@ export function toDefinition(
   return {
     schemaVersion: SCHEMA_VERSION,
     inputs,
+    outputs,
     steps,
     edges: edges.map((e) => ({ from: e.source, to: e.target })),
   }
 }
 
-/** True if adding source → target would close a loop (or is a self-edge). */
 /** Drops settings left empty in the inspector, so they don't reach the definition. */
 export function cleanSettings(d: StepSettings): StepSettings {
   const out: StepSettings = {}
@@ -81,6 +89,7 @@ export function cleanSettings(d: StepSettings): StepSettings {
   return out
 }
 
+/** True if adding source → target would close a loop (or is a self-edge). */
 export function wouldCreateCycle(edges: FlowEdge[], source: string, target: string): boolean {
   if (source === target) return true
   // A cycle appears if source is already reachable from target.

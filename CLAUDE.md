@@ -35,11 +35,14 @@ Frontend-only: `cd web && pnpm <dev|build|typecheck|test|lint|format>`.
 ```
 cmd/conductor      entrypoint: config, logger, HTTP server, graceful shutdown
 internal/config    flags + CONDUCTOR_* env vars
-internal/workflow  domain types, Repository interface, structural validation
+internal/workflow  domain types, Repository interface, structural validation,
+                   sub-workflow calls (calls.go)
+internal/preset    saved step configurations (presets) and their validation
 internal/block     block descriptors (fields, outputs) + executors (RunFunc); builtin registry
 internal/run       run/step/log types and the run Repository interface
 internal/engine    DAG scheduler (execute.go), step attempts/loops/approvals
-                   (step.go), batched logs, resuming runs after a restart
+                   (step.go), sub-workflow child runs (subrun.go), batched
+                   logs, resuming runs after a restart
 internal/events    in-process broker fanning run events out to SSE streams
 internal/tmpl      {{ expr }} templates: compile, render, reference extraction
 internal/secrets   AES-GCM cipher, keychain key, secret store, output masker
@@ -57,7 +60,10 @@ web/src/
     workflows/     list page, query hooks + API types (api.ts)
     blocks/        block descriptors from /api/blocks, icons
     editor/        canvas editor: Zustand store, graph helpers (tested), ELK
-                   layout, palette, inspector, generated config fields
+                   layout, library panel (library.ts, Palette.tsx), inspector,
+                   generated config fields
+    presets/       preset API hooks, save/rename dialog
+    library/       Library page: presets and the block reference
     runs/          runs list, run page (live graph, steps, logs, outputs),
                    SSE stream hook (stream.ts), run dialog for inputs
     secrets/       secrets page (values are write-only)
@@ -81,8 +87,11 @@ web/src/
   process groups) are in ADR 0003; conditions, retries, continue-on-error,
   loops and approvals in ADR 0006. Keep them in sync when changing the engine.
 - Per-step settings (`if`, `retry`, `continueOnError`, `forEach`, `timeout`)
-  live on `workflow.Step`, not in block config. The `approval` block has no
-  `RunFunc`; the engine runs it.
+  live on `workflow.Step`, not in block config. The `approval` and
+  `workflow` blocks have no `RunFunc`; the engine runs them.
+- A `workflow` step runs another workflow as a child run (ADR 0007). Saves
+  are checked with `workflow.ValidateCalls` too, which needs the other
+  workflows; runs list top-level runs unless filtered by workflow.
 - A run waiting for approval must survive restarts: Shutdown leaves it
   waiting and `Engine.Recover` resumes it at startup. Anything new that a
   run holds in memory must be rebuildable from the store.
@@ -121,6 +130,9 @@ web/src/
   machine has a global pnpm 11 that, without the pin, tries to purge
   `node_modules` in non-TTY shells (e.g. under `make`).
 - **Vite runs on 5180** (`strictPort`); 5173 is used by another project.
+- The `workflow` block's config form uses two field types the frontend
+  renders specially (`workflow`, `inputs`), and its outputs come from the
+  called workflow's summary (`useWorkflowMap`), not the block descriptor.
 - **Radix `asChild` + NavLink:** Slot can't merge function `className`s. Pass a
   string and style active links with `aria-[current=page]:` variants.
 - Prettier's Tailwind plugin needs `tailwindStylesheet` to know custom tokens;

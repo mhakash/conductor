@@ -3,7 +3,24 @@ import { useMemo } from 'react'
 
 import { api } from '@/lib/api'
 
-export type FieldType = 'text' | 'textarea' | 'code' | 'number' | 'boolean' | 'select' | 'keyvalue'
+export type FieldType =
+  | 'text'
+  | 'textarea'
+  | 'code'
+  | 'number'
+  | 'boolean'
+  | 'select'
+  | 'keyvalue'
+  /** A saved workflow, by id. */
+  | 'workflow'
+  /** Values for the inputs of the workflow chosen in the block's `workflow` field. */
+  | 'inputs'
+
+/** The block of a step that runs another workflow (ADR 0007). */
+export const CALL_BLOCK = 'workflow'
+
+/** Config of a CALL_BLOCK step. */
+export type CallConfig = { workflow?: string; inputs?: Record<string, string> }
 
 export type Field = {
   key: string

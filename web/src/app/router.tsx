@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router'
 
 import { AppShell } from '@/components/layout/AppShell'
+import { LibraryPage } from '@/features/library/LibraryPage'
 import { RunPage } from '@/features/runs/RunPage'
 import { RunsPage } from '@/features/runs/RunsPage'
 import { SecretsPage } from '@/features/secrets/SecretsPage'
@@ -21,6 +22,7 @@ export const router = createBrowserRouter([
       },
       { path: 'runs', element: <RunsPage /> },
       { path: 'runs/:id', element: <RunPage /> },
+      { path: 'library', element: <LibraryPage /> },
       { path: 'secrets', element: <SecretsPage /> },
       { path: '*', element: <Navigate to="/workflows" replace /> },
     ],

@@ -10,11 +10,12 @@ import {
 } from '@xyflow/react'
 import { create } from 'zustand'
 
-import { defaultConfig, type Block } from '@/features/blocks/api'
-import type { Workflow, WorkflowInput } from '@/features/workflows/api'
+import type { Workflow, WorkflowInput, WorkflowOutput } from '@/features/workflows/api'
 import type { Problem } from '@/lib/api'
 
+import type { StepTemplate } from './library'
 import {
+  cleanSettings,
   edgeId,
   nextStepId,
   STEP_ID_PATTERN,
@@ -31,6 +32,7 @@ type EditorState = {
   name: string
   description: string
   inputs: WorkflowInput[]
+  outputs: WorkflowOutput[]
   nodes: StepNode[]
   edges: Edge[]
   /** True when the draft differs from what was last loaded or saved. */
@@ -45,11 +47,12 @@ type EditorState = {
   setName: (name: string) => void
   setDescription: (description: string) => void
   setInputs: (inputs: WorkflowInput[]) => void
+  setOutputs: (outputs: WorkflowOutput[]) => void
   onNodesChange: (changes: NodeChange<StepNode>[]) => void
   onEdgesChange: (changes: EdgeChange[]) => void
   connect: (c: Connection) => void
   /** Adds a selected step; with `after`, also makes it depend on that step. */
-  addStep: (block: Block, position: XYPosition, after?: string) => string
+  addStep: (template: StepTemplate, position: XYPosition, after?: string) => string
   updateStep: (id: string, patch: Partial<StepData>) => void
   /** Returns an error message, or null when the rename was applied. */
   renameStep: (from: string, to: string) => string | null
@@ -66,6 +69,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
   name: '',
   description: '',
   inputs: [],
+  outputs: [],
   nodes: [],
   edges: [],
   dirty: false,
@@ -79,6 +83,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
       name: wf.name,
       description: wf.description,
       inputs: wf.definition.inputs ?? [],
+      outputs: wf.definition.outputs ?? [],
       nodes,
       edges,
       dirty: false,
@@ -91,6 +96,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
   setName: (name) => set({ name, dirty: true }),
   setDescription: (description) => set({ description, dirty: true }),
   setInputs: (inputs) => set({ inputs, dirty: true }),
+  setOutputs: (outputs) => set({ outputs, dirty: true }),
 
   onNodesChange: (changes) =>
     set((s) => ({
@@ -112,15 +118,16 @@ export const useEditor = create<EditorState>()((set, get) => ({
     set({ edges: addEdge({ ...c, id }, edges), dirty: true })
   },
 
-  addStep: (block, position, after) => {
+  addStep: (template, position, after) => {
     const { nodes, edges } = get()
-    const id = nextStepId(block.type, new Set(nodes.map((n) => n.id)))
+    const { block, name, idBase, config, ...settings } = template
+    const id = nextStepId(idBase, new Set(nodes.map((n) => n.id)))
     const node: StepNode = {
       id,
       type: 'step',
       position,
       selected: true,
-      data: { block: block.type, name: block.name, config: defaultConfig(block) },
+      data: { block, name, config: structuredClone(config), ...cleanSettings(settings) },
     }
     set({
       nodes: [...nodes.map((n) => (n.selected ? { ...n, selected: false } : n)), node],

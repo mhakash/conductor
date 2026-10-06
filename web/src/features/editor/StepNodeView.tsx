@@ -4,9 +4,10 @@ import { memo } from 'react'
 
 import { StepCard } from '@/components/flow/StepCard'
 import { StepTraits } from '@/components/flow/StepTraits'
-import { missingFields, useBlockMap } from '@/features/blocks/api'
+import { CALL_BLOCK, missingFields, useBlockMap, type CallConfig } from '@/features/blocks/api'
 import { statusLabel } from '@/features/runs/api'
 import { StatusIcon } from '@/features/runs/StatusIcon'
+import { useWorkflowMap } from '@/features/workflows/api'
 
 import type { StepNode } from './graph'
 import { useStepRunStatus } from './runOverlay'
@@ -20,6 +21,12 @@ function StepNodeViewImpl({ id, data, selected }: NodeProps<StepNode>) {
   const hasProblem = useEditor((s) => s.problems.some((p) => p.step === id))
   const missing = block ? missingFields(block, data.config) : []
   const lastStatus = useStepRunStatus(id)
+  const workflows = useWorkflowMap()
+  // A step that runs a workflow says which, in case it was renamed.
+  const target =
+    data.block === CALL_BLOCK
+      ? workflows.get((data.config as CallConfig).workflow ?? '')
+      : undefined
 
   return (
     <>
@@ -59,6 +66,8 @@ function StepNodeViewImpl({ id, data, selected }: NodeProps<StepNode>) {
             <span className="text-fg-subtle">
               Needs {missing.map((f) => sentenceCase(f.label)).join(', ')}
             </span>
+          ) : target && target.name !== data.name ? (
+            <span className="block truncate text-fg-subtle">Runs {target.name}</span>
           ) : null
         }
       />
