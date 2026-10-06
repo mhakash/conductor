@@ -41,6 +41,7 @@ internal/preset    saved step configurations (presets) and their validation
 internal/block     block descriptors (fields, outputs) + executors (RunFunc); builtin
                    registry; process.go runs shell/script steps on the host or
                    in Docker
+internal/wfyaml    workflows as YAML: encode/decode, needs ↔ edges, layout
 internal/run       run/step/log types and the run Repository interface
 internal/engine    DAG scheduler (execute.go), step attempts/loops/approvals
                    (step.go), sub-workflow child runs (subrun.go), batched

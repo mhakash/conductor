@@ -1,4 +1,4 @@
-import { MoreHorizontal, Trash2 } from 'lucide-react'
+import { Download, MoreHorizontal, Trash2 } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useState } from 'react'
 import { Link } from 'react-router'
@@ -8,7 +8,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Menu, MenuContent, MenuItem, MenuTrigger } from '@/components/ui/Menu'
 import { timeAgo } from '@/lib/time'
 
-import { useDeleteWorkflow, type WorkflowSummary } from './api'
+import { exportURL, useDeleteWorkflow, type WorkflowSummary } from './api'
 
 export function WorkflowList({ workflows }: { workflows: WorkflowSummary[] }) {
   const [toDelete, setToDelete] = useState<WorkflowSummary | null>(null)
@@ -62,6 +62,18 @@ export function WorkflowList({ workflows }: { workflows: WorkflowSummary[] }) {
                 <MoreHorizontal className="size-4" />
               </MenuTrigger>
               <MenuContent>
+                <MenuItem
+                  icon={<Download className="size-3.5" />}
+                  onSelect={() => {
+                    // The server names the file (Content-Disposition).
+                    const a = document.createElement('a')
+                    a.href = exportURL(wf.id)
+                    a.download = ''
+                    a.click()
+                  }}
+                >
+                  Export as YAML
+                </MenuItem>
                 <MenuItem
                   destructive
                   icon={<Trash2 className="size-3.5" />}

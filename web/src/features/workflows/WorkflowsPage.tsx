@@ -1,5 +1,5 @@
-import { Plus } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { FileUp, Plus } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
 
@@ -8,12 +8,14 @@ import { Button } from '@/components/ui/Button'
 
 import { useCreateWorkflow, useWorkflows } from './api'
 import { FlowPreview } from './FlowPreview'
+import { ImportDialog } from './ImportDialog'
 import { WorkflowList } from './WorkflowList'
 
 export function WorkflowsPage() {
   const workflows = useWorkflows()
   const create = useCreateWorkflow()
   const navigate = useNavigate()
+  const [importing, setImporting] = useState(false)
 
   const createWorkflow = () =>
     create.mutate(
@@ -24,16 +26,23 @@ export function WorkflowsPage() {
       },
     )
 
-  const newButton = (
-    <Button onClick={createWorkflow} disabled={create.isPending}>
-      <Plus className="size-3.5" strokeWidth={2.25} />
-      New workflow
-    </Button>
+  const actions = (
+    <>
+      <Button variant="secondary" onClick={() => setImporting(true)}>
+        <FileUp className="size-3.5" />
+        Import
+      </Button>
+      <Button onClick={createWorkflow} disabled={create.isPending}>
+        <Plus className="size-3.5" strokeWidth={2.25} />
+        New workflow
+      </Button>
+    </>
   )
 
   return (
     <>
-      <PageHeader title="Workflows" actions={newButton} />
+      <PageHeader title="Workflows" actions={actions} />
+      <ImportDialog open={importing} onOpenChange={setImporting} />
       <div className="flex flex-1 flex-col overflow-y-auto">
         {workflows.isPending ? null : workflows.isError ? (
           <Message title="Couldn't load workflows">

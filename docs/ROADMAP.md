@@ -35,6 +35,8 @@ Steps without a dependency path between them run in parallel.
       saved block presets, a library. See ADR 0007.
 - [x] **7 — Code execution.** Script blocks (Python, Node, Bash, Go) with an
       in-app editor; optional per-step Docker isolation. See ADR 0008.
+- [x] **8 — YAML.** View and edit workflows as YAML, export and import them.
+      See ADR 0009.
 
 ## Ideas parking lot
 

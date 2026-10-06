@@ -10,7 +10,7 @@ import {
 } from '@xyflow/react'
 import { create } from 'zustand'
 
-import type { Workflow, WorkflowInput, WorkflowOutput } from '@/features/workflows/api'
+import type { Definition, Workflow, WorkflowInput, WorkflowOutput } from '@/features/workflows/api'
 import type { Problem } from '@/lib/api'
 
 import type { StepTemplate } from './library'
@@ -41,6 +41,11 @@ type EditorState = {
   problems: Problem[]
 
   load: (wf: Workflow) => void
+  /**
+   * Replaces the draft's contents (e.g. with edited YAML), keeping it the
+   * same workflow and version. Steps that already exist keep their place.
+   */
+  replaceDraft: (fields: { name: string; description: string; definition: Definition }) => void
   markSaved: (version: string) => void
   setProblems: (problems: Problem[]) => void
 
@@ -87,6 +92,20 @@ export const useEditor = create<EditorState>()((set, get) => ({
       nodes,
       edges,
       dirty: false,
+      problems: [],
+    })
+  },
+  replaceDraft: ({ name, description, definition }) => {
+    const placed = new Map(get().nodes.map((n) => [n.id, n.position]))
+    const { nodes, edges } = toFlow(definition)
+    set({
+      name,
+      description,
+      inputs: definition.inputs ?? [],
+      outputs: definition.outputs ?? [],
+      nodes: nodes.map((n) => ({ ...n, position: placed.get(n.id) ?? n.position })),
+      edges,
+      dirty: true,
       problems: [],
     })
   },

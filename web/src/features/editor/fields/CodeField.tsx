@@ -2,6 +2,7 @@ import { go } from '@codemirror/lang-go'
 import { javascript } from '@codemirror/lang-javascript'
 import { json } from '@codemirror/lang-json'
 import { python } from '@codemirror/lang-python'
+import { yaml } from '@codemirror/lang-yaml'
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language'
 import { shell } from '@codemirror/legacy-modes/mode/shell'
 import { EditorView } from '@codemirror/view'
@@ -22,6 +23,7 @@ const languages: Record<string, () => Extension> = {
   python: () => python(),
   javascript: () => javascript(),
   go: () => go(),
+  yaml: () => yaml(),
 }
 
 const theme = EditorView.theme(

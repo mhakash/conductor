@@ -154,3 +154,29 @@ export function useWorkflowMap() {
   const { data } = useWorkflows()
   return useMemo(() => new Map((data ?? []).map((w) => [w.id, w])), [data])
 }
+
+// YAML (ADR 0009): the server converts, so the format lives in one place.
+
+/** Renders a workflow, saved or not, as YAML. */
+export const toYAML = (fields: WorkflowFields) => api.postText('/workflows/to-yaml', fields)
+
+/** Parses YAML into workflow fields without saving anything. */
+export const fromYAML = (yaml: string) =>
+  api.post<Required<Pick<WorkflowFields, 'name' | 'description' | 'definition'>>>(
+    '/workflows/from-yaml',
+    yaml,
+  )
+
+/** Where a saved workflow downloads as a YAML file. */
+export const exportURL = (id: string) => `/api/workflows/${id}/export`
+
+export function useImportWorkflow() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (yaml: string) => api.post<Workflow>('/workflows/import', yaml),
+    onSuccess: (wf) => {
+      qc.setQueryData(keys.one(wf.id), wf)
+      void qc.invalidateQueries({ queryKey: keys.all, exact: true })
+    },
+  })
+}

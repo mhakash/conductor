@@ -1,5 +1,5 @@
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react'
-import { ChevronLeft, Network, Play, Plus } from 'lucide-react'
+import { ChevronLeft, FileCode, Network, Play, Plus } from 'lucide-react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useEffectEvent, useMemo, useState } from 'react'
@@ -33,6 +33,7 @@ import { animatePositions, layoutGraph } from './layout'
 import { Palette } from './Palette'
 import { RunOverlayContext, useLatestRun } from './runOverlay'
 import { useEditor } from './store'
+import { YamlDialog } from './YamlDialog'
 
 export function EditorPage() {
   const { id = '' } = useParams()
@@ -97,6 +98,7 @@ function Editor({ workflow }: { workflow: Workflow }) {
   }
 
   const [conflict, setConflict] = useState(false)
+  const [yamlOpen, setYamlOpen] = useState(false)
 
   /**
    * Saves the draft; resolves to false (and shows why) when it fails. Unless
@@ -234,6 +236,10 @@ function Editor({ workflow }: { workflow: Workflow }) {
               ))}
             </MenuContent>
           </Menu>
+          <Button variant="ghost" onClick={() => setYamlOpen(true)}>
+            <FileCode className="size-3.5" />
+            <span className="hidden sm:inline">YAML</span>
+          </Button>
           <Button variant="ghost" onClick={autoLayout}>
             <Network className="size-3.5" />
             <span className="hidden sm:inline">Tidy up</span>
@@ -257,6 +263,7 @@ function Editor({ workflow }: { workflow: Workflow }) {
         <Inspector blocks={blockMap} />
       </div>
 
+      <YamlDialog open={yamlOpen} onOpenChange={setYamlOpen} />
       <UnsavedChangesGuard dirty={dirty} />
       <ConflictDialog
         open={conflict}
