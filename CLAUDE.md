@@ -5,6 +5,8 @@ on the host with dependencies and parallelism, edited and watched on a visual
 canvas. Local, single user, no auth.
 
 - Plan and progress: `docs/ROADMAP.md`. Decisions: `docs/adr/`.
+- Writing workflows as YAML (every block, field, setting and expression
+  rule): `docs/workflow-yaml.md`. Read it before creating a workflow file.
 - Vocabulary (use it in code, UI and docs): **block** = node type, **step** =
   configured block in a workflow, **workflow**, **run**, **expression**. See the
   table in the roadmap.
@@ -17,6 +19,11 @@ canvas. Local, single user, no auth.
   (storage format, libraries, execution model) as a new ADR.
 - Prefer established libraries over hand-rolled code. No placeholder features,
   filler copy or speculative abstractions.
+- Keep `docs/workflow-yaml.md` current in the same change whenever blocks,
+  their fields or outputs, step settings, inputs/outputs, expression rules,
+  validation limits or the YAML format change. `go test ./internal/wfyaml`
+  fails if an example stops importing or a block field is undocumented.
+- Commit messages describe the change; no "Phase N" prefixes.
 
 ## Commands
 
