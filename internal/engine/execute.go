@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,12 +25,19 @@ type stepResult struct {
 	config    json.RawMessage // resolved and masked, as recorded
 	startedAt *time.Time
 	progress  run.Progress
-	// approval marks results of approval steps, which don't count as work
-	// in progress while they wait.
-	approval bool
+	// waits marks a suspended step that waits for approval, itself or in a
+	// run it started; such a step keeps the run alive across a restart.
+	waits bool
 	// suspended means Conductor is stopping and the step was left as the
 	// store has it (waiting for approval, or queued) to resume after restart.
 	suspended bool
+}
+
+// waitingUpdate says whether a step that runs a workflow is now waiting
+// for an approval in that run.
+type waitingUpdate struct {
+	step    string
+	waiting bool
 }
 
 // outcome is what downstream steps can see of a finished step.
@@ -47,9 +55,14 @@ type runner struct {
 	r      run.Run
 	log    *slog.Logger
 	masker *secrets.Masker
+	// masked lists the values masker hides, for runs this one starts.
+	masked []string
 	sink   *logSink
 	// secretEnv holds decrypted values for expressions; never recorded.
 	secretEnv map[string]any
+	// lineage lists the workflow ids of this run and the runs above it,
+	// to stop a workflow from running itself.
+	lineage []string
 
 	steps      map[string]workflow.Step
 	parents    map[string][]string
@@ -61,13 +74,15 @@ type runner struct {
 	stored map[string]run.StepRun
 
 	results   chan stepResult
+	updates   chan waitingUpdate
 	slots     chan struct{}
 	inFlight  int             // started steps whose result hasn't arrived
-	waiting   map[string]bool // approval steps among them
-	suspended int             // approvals left waiting by a shutdown
+	waiting   map[string]bool // those among them waiting for approval
+	suspended int             // steps left waiting by a shutdown
 
 	status    run.Status
 	startedAt time.Time
+	outputs   map[string]any // the workflow's outputs, recorded and masked
 }
 
 // execute runs r to completion. Steps start as soon as everything they
@@ -75,13 +90,14 @@ type runner struct {
 // step fails, everything downstream of it is skipped; independent branches
 // carry on. With resuming set, r was loaded from the store after a restart
 // and carries on from where it was left.
-func (e *Engine) execute(ctx context.Context, r run.Run, secretValues map[string]string, resuming bool) {
+func (e *Engine) execute(ctx context.Context, l launch) {
+	r, resuming := l.run, l.resuming
 	store := context.WithoutCancel(ctx)
 	log := e.log.With("run", r.ID)
 
 	rn := &runner{
 		e: e, ctx: ctx, store: store, r: r, log: log,
-		secretEnv:  make(map[string]any, len(secretValues)),
+		secretEnv:  make(map[string]any, len(l.secrets)),
 		steps:      make(map[string]workflow.Step, len(r.Definition.Steps)),
 		parents:    map[string][]string{},
 		dependents: map[string][]string{},
@@ -89,16 +105,19 @@ func (e *Engine) execute(ctx context.Context, r run.Run, secretValues map[string
 		done:       make(map[string]outcome, len(r.Definition.Steps)),
 		started:    map[string]bool{},
 		results:    make(chan stepResult),
+		updates:    make(chan waitingUpdate),
 		slots:      make(chan struct{}, e.maxParallel),
 		waiting:    map[string]bool{},
 		status:     run.StatusRunning,
 	}
-	masked := make([]string, 0, len(secretValues))
-	for name, v := range secretValues {
+	masked := slices.Clone(l.masked)
+	for name, v := range l.secrets {
 		rn.secretEnv[name] = v
 		masked = append(masked, v)
 	}
+	rn.masked = masked
 	rn.masker = secrets.NewMasker(masked)
+	rn.lineage = e.lineage(store, r)
 	for _, s := range r.Definition.Steps {
 		rn.steps[s.ID] = s
 	}
@@ -141,6 +160,8 @@ func (rn *runner) begin(resuming bool) {
 				var outputs map[string]any
 				_ = json.Unmarshal(st.Outputs, &outputs)
 				rn.done[st.StepID] = outcome{status: st.Status, outputs: outputs}
+			case st.Status == run.StatusRunning && rn.steps[st.StepID].Block == workflow.CallBlock:
+				// It runs again and picks up the runs it had started.
 			case st.Status == run.StatusRunning:
 				// The process died mid-step; whatever it was doing is gone.
 				rn.record(stepResult{id: st.StepID, status: run.StatusCancelled,
@@ -165,16 +186,24 @@ func (rn *runner) begin(resuming bool) {
 
 func (rn *runner) loop() {
 	for rn.inFlight > 0 {
-		res := <-rn.results
-		rn.inFlight--
-		delete(rn.waiting, res.id)
-		if res.suspended {
-			if res.approval {
-				rn.suspended++
+		select {
+		case u := <-rn.updates:
+			if u.waiting {
+				rn.waiting[u.step] = true
+			} else {
+				delete(rn.waiting, u.step)
 			}
-			continue
+		case res := <-rn.results:
+			rn.inFlight--
+			delete(rn.waiting, res.id)
+			if res.suspended {
+				if res.waits {
+					rn.suspended++
+				}
+				continue
+			}
+			rn.complete(res)
 		}
-		rn.complete(res)
 		rn.syncStatus()
 	}
 }
@@ -215,11 +244,19 @@ func (rn *runner) finish() {
 	case cancelled:
 		status = run.StatusCancelled
 	}
+	if status == run.StatusSucceeded && len(rn.r.Definition.Outputs) > 0 {
+		outputs, err := evalOutputs(rn.r.Definition.Outputs, rn.exprEnv())
+		if err != nil {
+			status, msg = run.StatusFailed, rn.masker.Mask(err.Error())
+		} else {
+			_ = json.Unmarshal(maskJSON(rn.masker, outputs), &rn.outputs)
+		}
+	}
 
 	// Flush logs first so the stream never ends with lines still unsent.
 	rn.sink.Close()
 	finishedAt := rn.e.now()
-	if err := rn.e.runs.FinishRun(rn.store, rn.r.ID, status, msg, finishedAt); err != nil {
+	if err := rn.e.runs.FinishRun(rn.store, rn.r.ID, status, rn.outputs, msg, finishedAt); err != nil {
 		rn.log.Error("finish run", "err", err)
 	}
 	rn.status = status
@@ -263,8 +300,9 @@ func (rn *runner) ready(id string) {
 		rn.startApproval(s, env)
 		return
 	}
+	resuming := rn.stored[id].Status == run.StatusRunning
 	rn.inFlight++
-	go func() { rn.results <- rn.runStep(s, env) }()
+	go func() { rn.results <- rn.runStep(s, env, resuming) }()
 }
 
 // complete records a step's result and moves on to what depends on it.
@@ -344,8 +382,15 @@ func (rn *runner) syncStatus() {
 
 func (rn *runner) publishRun(finishedAt *time.Time, msg string) {
 	rn.e.events.Publish(rn.r.ID, run.Event{Type: run.EventRun, State: &run.State{
-		Status: rn.status, Error: msg, StartedAt: &rn.startedAt, FinishedAt: finishedAt,
+		Status: rn.status, Outputs: rn.outputs, Error: msg, StartedAt: &rn.startedAt, FinishedAt: finishedAt,
 	}})
+	if p := rn.r.Parent; p != nil {
+		rn.e.childChanged(p.RunID, run.Summary{
+			ID: rn.r.ID, WorkflowID: rn.r.WorkflowID, WorkflowName: rn.r.WorkflowName,
+			Status: rn.status, Error: msg, StepCount: len(rn.r.Definition.Steps),
+			CreatedAt: rn.r.CreatedAt, StartedAt: &rn.startedAt, FinishedAt: finishedAt, Parent: p,
+		})
+	}
 }
 
 func (rn *runner) isDone(id string) bool {
@@ -380,6 +425,24 @@ func (rn *runner) exprEnv() map[string]any {
 		"run":      map[string]any{"id": rn.r.ID},
 		"workflow": map[string]any{"id": rn.r.WorkflowID, "name": rn.r.WorkflowName},
 	}
+}
+
+// evalOutputs evaluates a workflow's outputs once all its steps are done.
+func evalOutputs(outputs []workflow.Output, env map[string]any) (map[string]any, error) {
+	values := make(map[string]any, len(outputs))
+	for _, o := range outputs {
+		e, err := tmpl.CompileExpr(o.Value)
+		if err == nil {
+			values[o.Name], err = e.Eval(env)
+		}
+		if err == nil && values[o.Name] == nil {
+			err = errors.New("has no value; check the name")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("output %s: %w", o.Name, err)
+		}
+	}
+	return values, nil
 }
 
 func evalCondition(src string, env map[string]any) (bool, error) {

@@ -73,7 +73,7 @@ func Validate(w Workflow, blockExists func(string) bool) error {
 				add(Problem{Step: s.ID, Message: fmt.Sprintf("step %q has an invalid timeout %q; use a duration like 30s, 5m or 1h", s.ID, s.Timeout)})
 			}
 		}
-		problems = append(problems, validateSettings(s)...)
+		problems = append(problems, ValidateSettings(s)...)
 	}
 
 	seen := make(map[Edge]bool, len(def.Edges))
@@ -100,6 +100,7 @@ func Validate(w Workflow, blockExists func(string) bool) error {
 	// Expression references depend on the graph, so check them last.
 	if len(problems) == 0 {
 		problems = append(problems, checkExpressions(def)...)
+		problems = append(problems, checkOutputs(def, steps)...)
 	}
 
 	if len(problems) > 0 {
@@ -108,9 +109,9 @@ func Validate(w Workflow, blockExists func(string) bool) error {
 	return nil
 }
 
-// validateSettings checks a step's retry and loop settings. Its condition
+// ValidateSettings checks a step's retry and loop settings. Its condition
 // and loop list are expressions, checked with the others.
-func validateSettings(s Step) []Problem {
+func ValidateSettings(s Step) []Problem {
 	var problems []Problem
 	add := func(format string, args ...any) {
 		problems = append(problems, Problem{Step: s.ID, Message: fmt.Sprintf("step %q: ", s.ID) + fmt.Sprintf(format, args...)})
@@ -249,6 +250,52 @@ func checkExpressions(def Definition) []Problem {
 				fail(" uses %s outside its config; the item only exists while the step runs", r.Name)
 			case r.Kind == "item" && s.ForEach == nil:
 				fail(" uses %s, which only exists in steps that run once per item", r.Name)
+			}
+		}
+	}
+	return problems
+}
+
+// checkOutputs checks the workflow's outputs: unique names, and expressions
+// that only read steps and inputs that exist. They are evaluated after every
+// step has finished, so any step may be used.
+func checkOutputs(def Definition, steps map[string]bool) []Problem {
+	inputs := make(map[string]bool, len(def.Inputs))
+	for _, in := range def.Inputs {
+		inputs[in.Name] = true
+	}
+	var problems []Problem
+	seen := map[string]bool{}
+	for _, o := range def.Outputs {
+		fail := func(format string, args ...any) {
+			problems = append(problems, Problem{Message: fmt.Sprintf("output %q ", o.Name) + fmt.Sprintf(format, args...)})
+		}
+		switch {
+		case !inputNamePattern.MatchString(o.Name):
+			problems = append(problems, Problem{Message: fmt.Sprintf("output name %q must start with a letter and use only letters, digits and _", o.Name)})
+			continue
+		case seen[o.Name]:
+			fail("is defined more than once")
+			continue
+		}
+		seen[o.Name] = true
+		if strings.TrimSpace(o.Value) == "" {
+			fail("needs a value, like steps.build.outputs.stdout")
+			continue
+		}
+		e, err := tmpl.CompileExpr(o.Value)
+		if err != nil {
+			fail("value: %v", err)
+			continue
+		}
+		for _, r := range e.Refs() {
+			switch {
+			case r.Kind == "steps" && !steps[r.Name]:
+				fail("uses step %q, which doesn't exist", r.Name)
+			case r.Kind == "inputs" && !inputs[r.Name]:
+				fail("uses input %q, which isn't defined", r.Name)
+			case r.Kind == "item":
+				fail("uses %s, which only exists in steps that run once per item", r.Name)
 			}
 		}
 	}

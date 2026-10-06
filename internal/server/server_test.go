@@ -39,12 +39,14 @@ func newTestServer(t *testing.T) *httptest.Server {
 		t.Fatal(err)
 	}
 	secretStore := secrets.NewStore(db, cipher)
-	eng := engine.New(engine.Options{Runs: runs, Blocks: blocks, Events: broker, Secrets: secretStore, Log: log})
+	workflows := store.NewWorkflows(db)
+	eng := engine.New(engine.Options{Runs: runs, Workflows: workflows.Get, Blocks: blocks, Events: broker, Secrets: secretStore, Log: log})
 	t.Cleanup(func() { _ = eng.Shutdown(context.Background()) })
 
 	srv := httptest.NewServer(New(Deps{
 		Log:       log,
-		Workflows: store.NewWorkflows(db),
+		Workflows: workflows,
+		Presets:   store.NewPresets(db),
 		Runs:      runs,
 		Engine:    eng,
 		Broker:    broker,

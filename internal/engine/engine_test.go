@@ -84,13 +84,14 @@ func testBlocks(c *concurrency) *block.Registry {
 		}
 		return map[string]any{"ok": true}, nil
 	}}
-	return block.NewRegistry(sleep, fail, panicky, echo, needs, emit, flaky, block.Approval)
+	return block.NewRegistry(sleep, fail, panicky, echo, needs, emit, flaky, block.Approval, block.Workflow)
 }
 
 type fixture struct {
-	engine *Engine
-	runs   *store.Runs
-	conc   *concurrency
+	engine    *Engine
+	runs      *store.Runs
+	conc      *concurrency
+	workflows *store.Workflows
 }
 
 func newFixture(t *testing.T, maxParallel int) fixture {
@@ -101,7 +102,7 @@ func newFixture(t *testing.T, maxParallel int) fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	f := fixture{runs: store.NewRuns(db), conc: &concurrency{}}
+	f := fixture{runs: store.NewRuns(db), conc: &concurrency{}, workflows: store.NewWorkflows(db)}
 	f.engine = f.newEngine(t, maxParallel)
 	return f
 }
@@ -109,7 +110,7 @@ func newFixture(t *testing.T, maxParallel int) fixture {
 // newEngine returns another engine on the fixture's database, as if
 // Conductor had restarted.
 func (f fixture) newEngine(t *testing.T, maxParallel int) *Engine {
-	e := New(Options{Runs: f.runs, Blocks: testBlocks(f.conc), Log: slog.New(slog.DiscardHandler),
+	e := New(Options{Runs: f.runs, Workflows: f.workflows.Get, Blocks: testBlocks(f.conc), Log: slog.New(slog.DiscardHandler),
 		MaxParallel: maxParallel, Secrets: fakeSecrets{"TOKEN": "s3cr3t-token"}})
 	t.Cleanup(func() { _ = e.Shutdown(context.Background()) })
 	return e

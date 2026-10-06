@@ -337,7 +337,7 @@ func TestRecoverAfterCrash(t *testing.T) {
 
 func TestCheckRejectsLoopingApproval(t *testing.T) {
 	f := newFixture(t, 8)
-	err := f.engine.Check(build([]stepSpec{{id: "ok", block: "approval", edit: retry(2)}}))
+	err := f.engine.Check(context.Background(), build([]stepSpec{{id: "ok", block: "approval", edit: retry(2)}}))
 	if err == nil || !strings.Contains(err.Error(), "approval steps can't retry") {
 		t.Errorf("Check = %v", err)
 	}

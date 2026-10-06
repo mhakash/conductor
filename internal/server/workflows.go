@@ -1,9 +1,12 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -74,7 +77,7 @@ func (s *Server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wf := in.toWorkflow()
-	if err := workflow.Validate(wf, s.blocks.Has); err != nil {
+	if err := s.validate(r.Context(), wf); err != nil {
 		s.repoError(w, r, err)
 		return
 	}
@@ -93,7 +96,7 @@ func (s *Server) handleUpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 	wf := in.toWorkflow()
 	wf.ID = chi.URLParam(r, "id")
-	if err := workflow.Validate(wf, s.blocks.Has); err != nil {
+	if err := s.validate(r.Context(), wf); err != nil {
 		s.repoError(w, r, err)
 		return
 	}
@@ -105,8 +108,33 @@ func (s *Server) handleUpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, updated)
 }
 
+// validate checks a workflow before it is saved, including the workflows
+// its steps run.
+func (s *Server) validate(ctx context.Context, wf workflow.Workflow) error {
+	if err := workflow.Validate(wf, s.blocks.Has); err != nil {
+		return err
+	}
+	return workflow.ValidateCalls(ctx, wf, s.workflows.Get)
+}
+
+// handleDeleteWorkflow refuses to delete a workflow other workflows run, so
+// they don't fail at their next run.
 func (s *Server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
-	if err := s.workflows.Delete(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	callers, err := s.workflows.Callers(r.Context(), id)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if callers = slices.DeleteFunc(callers, func(c workflow.Summary) bool { return c.ID == id }); len(callers) > 0 {
+		names := make([]string, len(callers))
+		for i, c := range callers {
+			names[i] = c.Name
+		}
+		writeError(w, http.StatusConflict, fmt.Sprintf("%s runs this workflow. Remove that step before deleting it.", strings.Join(names, ", ")))
+		return
+	}
+	if err := s.workflows.Delete(r.Context(), id); err != nil {
 		s.repoError(w, r, err)
 		return
 	}

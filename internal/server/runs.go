@@ -36,6 +36,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	list, err := s.runs.List(r.Context(), run.ListFilter{
 		WorkflowID: r.URL.Query().Get("workflowId"),
 		Status:     run.Status(r.URL.Query().Get("status")),
+		TopLevel:   r.URL.Query().Get("topLevel") == "true",
 		Limit:      limit,
 	})
 	if err != nil {

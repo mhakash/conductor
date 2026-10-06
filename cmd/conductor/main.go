@@ -63,10 +63,12 @@ func run() error {
 	}
 	secretStore := secrets.NewStore(db, cipher)
 
+	workflows := store.NewWorkflows(db)
 	blocks := block.Builtin()
 	broker := events.NewBroker()
 	eng := engine.New(engine.Options{
 		Runs:        runs,
+		Workflows:   workflows.Get,
 		Blocks:      blocks,
 		Events:      broker,
 		Secrets:     secretStore,
@@ -84,7 +86,8 @@ func run() error {
 
 	srv := server.New(server.Deps{
 		Log:       log,
-		Workflows: store.NewWorkflows(db),
+		Workflows: workflows,
+		Presets:   store.NewPresets(db),
 		Runs:      runs,
 		Engine:    eng,
 		Broker:    broker,

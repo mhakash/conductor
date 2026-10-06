@@ -43,13 +43,28 @@ type Run struct {
 	WorkflowName string              `json:"workflowName"`
 	Definition   workflow.Definition `json:"definition"`
 	// Inputs are the values this run was started with, after defaults.
-	Inputs     map[string]any `json:"inputs"`
+	Inputs map[string]any `json:"inputs"`
+	// Outputs are the workflow's outputs, set when it succeeds.
+	Outputs    map[string]any `json:"outputs"`
 	Status     Status         `json:"status"`
 	Error      string         `json:"error,omitempty"`
 	CreatedAt  time.Time      `json:"createdAt"`
 	StartedAt  *time.Time     `json:"startedAt"`
 	FinishedAt *time.Time     `json:"finishedAt"`
 	Steps      []StepRun      `json:"steps"`
+	// Parent is set on a run started by a step of another run.
+	Parent *Parent `json:"parent,omitempty"`
+	// Children are the runs this run's steps started, oldest first.
+	Children []Summary `json:"children"`
+}
+
+// Parent points from a child run to the step that started it.
+type Parent struct {
+	RunID        string `json:"runId"`
+	WorkflowName string `json:"workflowName"`
+	StepID       string `json:"stepId"`
+	// Item is the loop index when the step runs once per item.
+	Item *int `json:"item,omitempty"`
 }
 
 type StepRun struct {
@@ -85,6 +100,7 @@ type Summary struct {
 	CreatedAt    time.Time  `json:"createdAt"`
 	StartedAt    *time.Time `json:"startedAt"`
 	FinishedAt   *time.Time `json:"finishedAt"`
+	Parent       *Parent    `json:"parent,omitempty"`
 }
 
 type Stream string
@@ -110,7 +126,9 @@ type LogLine struct {
 type ListFilter struct {
 	WorkflowID string
 	Status     Status
-	Limit      int
+	// TopLevel leaves out runs started by other runs.
+	TopLevel bool
+	Limit    int
 }
 
 var ErrNotFound = errors.New("run not found")
@@ -124,7 +142,8 @@ type Repository interface {
 	StartRun(ctx context.Context, id string, at time.Time) error
 	// SetRunStatus switches an unfinished run between running and waiting.
 	SetRunStatus(ctx context.Context, id string, status Status) error
-	FinishRun(ctx context.Context, id string, status Status, errMsg string, at time.Time) error
+	// FinishRun records a run's outcome; outputs may be nil.
+	FinishRun(ctx context.Context, id string, status Status, outputs map[string]any, errMsg string, at time.Time) error
 	// StartStep records that a step began (running, or waiting for approval).
 	StartStep(ctx context.Context, runID, stepID string, status Status, config json.RawMessage, at time.Time) error
 	UpdateStep(ctx context.Context, runID, stepID string, p Progress) error
@@ -137,11 +156,13 @@ type Repository interface {
 
 	// FailUnfinished marks runs left unfinished (e.g. by a crash) as failed
 	// with msg, along with their unfinished steps. Runs with a step waiting
-	// for approval are left alone, to be resumed. It returns how many runs it
-	// failed.
+	// for approval are left alone, to be resumed, and so are the runs that
+	// started them. It returns how many runs it failed.
 	FailUnfinished(ctx context.Context, msg string, at time.Time) (int, error)
 	// Unfinished lists the ids of runs that haven't finished, oldest first.
 	Unfinished(ctx context.Context) ([]string, error)
+	// Children lists the runs started by the steps of run id, oldest first.
+	Children(ctx context.Context, id string) ([]Summary, error)
 }
 
 // EventType names a change to a run, streamed to clients as it happens.
@@ -154,16 +175,20 @@ const (
 	EventRun      EventType = "run"
 	EventStep     EventType = "step"
 	EventLogs     EventType = "logs"
+	// EventChild carries the summary of a run one of this run's steps
+	// started, whenever that run starts, waits or finishes.
+	EventChild EventType = "child"
 	// EventEnd says the run has finished and the stream will close.
 	EventEnd EventType = "end"
 )
 
 // State is the run-level part of a Run, sent when the run starts or finishes.
 type State struct {
-	Status     Status     `json:"status"`
-	Error      string     `json:"error,omitempty"`
-	StartedAt  *time.Time `json:"startedAt"`
-	FinishedAt *time.Time `json:"finishedAt"`
+	Status     Status         `json:"status"`
+	Outputs    map[string]any `json:"outputs,omitempty"`
+	Error      string         `json:"error,omitempty"`
+	StartedAt  *time.Time     `json:"startedAt"`
+	FinishedAt *time.Time     `json:"finishedAt"`
 }
 
 // Event is one message on a run's stream. Step and log events carry complete
@@ -175,6 +200,7 @@ type Event struct {
 	State *State    `json:"state,omitempty"`
 	Step  *StepRun  `json:"step,omitempty"`
 	Lines []LogLine `json:"lines,omitempty"`
+	Child *Summary  `json:"child,omitempty"`
 }
 
 // Publisher receives events as the engine records them.

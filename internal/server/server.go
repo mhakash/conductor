@@ -15,6 +15,7 @@ import (
 	"conductor/internal/block"
 	"conductor/internal/engine"
 	"conductor/internal/events"
+	"conductor/internal/preset"
 	"conductor/internal/run"
 	"conductor/internal/secrets"
 	"conductor/internal/version"
@@ -24,6 +25,7 @@ import (
 type Deps struct {
 	Log       *slog.Logger
 	Workflows workflow.Repository
+	Presets   preset.Repository
 	Runs      run.Repository
 	Engine    *engine.Engine
 	Broker    *events.Broker
@@ -36,6 +38,7 @@ type Deps struct {
 type Server struct {
 	log       *slog.Logger
 	workflows workflow.Repository
+	presets   preset.Repository
 	runs      run.Repository
 	engine    *engine.Engine
 	broker    *events.Broker
@@ -54,6 +57,7 @@ func New(d Deps) *Server {
 	return &Server{
 		log:       d.Log,
 		workflows: d.Workflows,
+		presets:   d.Presets,
 		runs:      d.Runs,
 		engine:    d.Engine,
 		broker:    d.Broker,
@@ -88,6 +92,12 @@ func (s *Server) Handler() http.Handler {
 			r.Put("/{id}", s.handleUpdateWorkflow)
 			r.Delete("/{id}", s.handleDeleteWorkflow)
 			r.Post("/{id}/runs", s.handleStartRun)
+		})
+		r.Route("/presets", func(r chi.Router) {
+			r.Get("/", s.handleListPresets)
+			r.Post("/", s.handleCreatePreset)
+			r.Put("/{id}", s.handleUpdatePreset)
+			r.Delete("/{id}", s.handleDeletePreset)
 		})
 		r.Route("/secrets", func(r chi.Router) {
 			r.Get("/", s.handleListSecrets)

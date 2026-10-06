@@ -1,8 +1,29 @@
 package block
 
+import "conductor/internal/workflow"
+
 // Builtin returns the blocks that ship with Conductor.
 func Builtin() *Registry {
-	return NewRegistry(Shell, HTTP, Approval)
+	return NewRegistry(Shell, HTTP, Approval, Workflow)
+}
+
+// Workflow runs another workflow as one step. Like Approval it has no
+// RunFunc: the engine starts the workflow as a child run and waits for it.
+// Its outputs are the called workflow's outputs, so it declares none here.
+var Workflow = Block{
+	Type:        workflow.CallBlock,
+	Name:        "Run workflow",
+	Description: "Run another workflow as one step and use its outputs.",
+	Category:    "Control",
+	Icon:        "workflow",
+	Fields: []Field{
+		{Key: "workflow", Label: "Workflow", Type: FieldWorkflow, Required: true},
+		{
+			Key: "inputs", Label: "Inputs", Type: FieldInputs,
+			Help: "Leave an input empty to use its default.",
+		},
+	},
+	Outputs: []Output{},
 }
 
 // ApprovalType is the block the engine runs itself: it doesn't do work, it

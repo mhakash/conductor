@@ -25,10 +25,25 @@ func NewWorkflows(db *sql.DB) *Workflows {
 var _ workflow.Repository = (*Workflows)(nil)
 
 func (s *Workflows) List(ctx context.Context) ([]workflow.Summary, error) {
+	return s.summaries(ctx, `ORDER BY updated_at DESC`)
+}
+
+func (s *Workflows) Callers(ctx context.Context, id string) ([]workflow.Summary, error) {
+	return s.summaries(ctx, `
+		WHERE EXISTS (
+			SELECT 1 FROM json_each(workflows.definition, '$.steps')
+			WHERE value ->> '$.block' = ? AND value ->> '$.config.workflow' = ?
+		)
+		ORDER BY name`, workflow.CallBlock, id)
+}
+
+// summaries lists workflows; tail is the WHERE/ORDER BY part of the query.
+func (s *Workflows) summaries(ctx context.Context, tail string, args ...any) ([]workflow.Summary, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, description, json_array_length(definition, '$.steps'), created_at, updated_at
-		FROM workflows
-		ORDER BY updated_at DESC`)
+		SELECT id, name, description, json_array_length(definition, '$.steps'),
+		       coalesce(definition -> '$.inputs', '[]'), coalesce(definition -> '$.outputs', '[]'),
+		       created_at, updated_at
+		FROM workflows `+tail, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list workflows: %w", err)
 	}
@@ -37,9 +52,21 @@ func (s *Workflows) List(ctx context.Context) ([]workflow.Summary, error) {
 	out := []workflow.Summary{}
 	for rows.Next() {
 		var w workflow.Summary
-		var created, updated string
-		if err := rows.Scan(&w.ID, &w.Name, &w.Description, &w.StepCount, &created, &updated); err != nil {
+		var inputs, outputs, created, updated string
+		if err := rows.Scan(&w.ID, &w.Name, &w.Description, &w.StepCount, &inputs, &outputs, &created, &updated); err != nil {
 			return nil, fmt.Errorf("scan workflow: %w", err)
+		}
+		if err := json.Unmarshal([]byte(inputs), &w.Inputs); err != nil {
+			return nil, fmt.Errorf("decode inputs of %s: %w", w.ID, err)
+		}
+		if err := json.Unmarshal([]byte(outputs), &w.Outputs); err != nil {
+			return nil, fmt.Errorf("decode outputs of %s: %w", w.ID, err)
+		}
+		if w.Inputs == nil {
+			w.Inputs = []workflow.Input{}
+		}
+		if w.Outputs == nil {
+			w.Outputs = []workflow.Output{}
 		}
 		if w.CreatedAt, err = parseTime(created); err != nil {
 			return nil, err

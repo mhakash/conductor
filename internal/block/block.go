@@ -22,6 +22,11 @@ const (
 	FieldBoolean  FieldType = "boolean"
 	FieldSelect   FieldType = "select" // one of Field.Options
 	FieldKeyValue FieldType = "keyvalue"
+	// FieldWorkflow picks a saved workflow by id.
+	FieldWorkflow FieldType = "workflow"
+	// FieldInputs holds values for the inputs of the workflow chosen in the
+	// block's FieldWorkflow field, by input name.
+	FieldInputs FieldType = "inputs"
 )
 
 type Option struct {

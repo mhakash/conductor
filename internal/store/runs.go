@@ -52,14 +52,27 @@ func (s *Runs) Create(ctx context.Context, r run.Run) (run.Run, error) {
 	}
 	defer tx.Rollback()
 
+	var parentRun, parentStep sql.NullString
+	var parentItem sql.NullInt64
+	if p := r.Parent; p != nil {
+		parentRun = sql.NullString{String: p.RunID, Valid: true}
+		parentStep = sql.NullString{String: p.StepID, Valid: true}
+		if p.Item != nil {
+			parentItem = sql.NullInt64{Int64: int64(*p.Item), Valid: true}
+		}
+	}
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO runs (id, workflow_id, workflow_name, definition, inputs, status, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		r.ID, r.WorkflowID, r.WorkflowName, string(def), string(inputs), r.Status, formatTime(r.CreatedAt))
+		INSERT INTO runs (id, workflow_id, workflow_name, definition, inputs, status, created_at,
+		                  parent_run_id, parent_step_id, parent_item)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.WorkflowID, r.WorkflowName, string(def), string(inputs), r.Status, formatTime(r.CreatedAt),
+		parentRun, parentStep, parentItem)
 	if err != nil {
 		return run.Run{}, fmt.Errorf("insert run: %w", err)
 	}
 
+	r.Outputs = map[string]any{}
+	r.Children = []run.Summary{}
 	r.Steps = make([]run.StepRun, len(r.Definition.Steps))
 	for i, step := range r.Definition.Steps {
 		r.Steps[i] = run.StepRun{StepID: step.ID, Status: run.StatusQueued,
@@ -76,12 +89,15 @@ func (s *Runs) Create(ctx context.Context, r run.Run) (run.Run, error) {
 
 func (s *Runs) Get(ctx context.Context, id string) (run.Run, error) {
 	var r run.Run
-	var def, inputs, created string
+	var def, inputs, outputs, created string
 	var started, finished sql.NullString
+	var parent parentCols
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, workflow_id, workflow_name, definition, inputs, status, error, created_at, started_at, finished_at
-		FROM runs WHERE id = ?`, id,
-	).Scan(&r.ID, &r.WorkflowID, &r.WorkflowName, &def, &inputs, &r.Status, &r.Error, &created, &started, &finished)
+		SELECT runs.id, runs.workflow_id, runs.workflow_name, runs.definition, runs.inputs, runs.outputs,
+		       runs.status, runs.error, runs.created_at, runs.started_at, runs.finished_at, `+parentSelect+`
+		FROM runs `+parentJoin+` WHERE runs.id = ?`, id,
+	).Scan(&r.ID, &r.WorkflowID, &r.WorkflowName, &def, &inputs, &outputs, &r.Status, &r.Error, &created, &started, &finished,
+		&parent.run, &parent.workflow, &parent.step, &parent.item)
 	if errors.Is(err, sql.ErrNoRows) {
 		return run.Run{}, run.ErrNotFound
 	}
@@ -94,6 +110,10 @@ func (s *Runs) Get(ctx context.Context, id string) (run.Run, error) {
 	if err := json.Unmarshal([]byte(inputs), &r.Inputs); err != nil {
 		return run.Run{}, fmt.Errorf("decode run inputs: %w", err)
 	}
+	if err := json.Unmarshal([]byte(outputs), &r.Outputs); err != nil {
+		return run.Run{}, fmt.Errorf("decode run outputs: %w", err)
+	}
+	r.Parent = parent.value()
 	if r.CreatedAt, err = parseTime(created); err != nil {
 		return run.Run{}, err
 	}
@@ -130,7 +150,35 @@ func (s *Runs) Get(ctx context.Context, id string) (run.Run, error) {
 		}
 		r.Steps = append(r.Steps, st)
 	}
-	return r, rows.Err()
+	if err := rows.Err(); err != nil {
+		return run.Run{}, err
+	}
+	r.Children, err = s.Children(ctx, id)
+	return r, err
+}
+
+// parentSelect and parentJoin read a run's parent; the join supplies the
+// parent's workflow name.
+const (
+	parentSelect = `runs.parent_run_id, parent.workflow_name, runs.parent_step_id, runs.parent_item`
+	parentJoin   = `LEFT JOIN runs AS parent ON parent.id = runs.parent_run_id`
+)
+
+type parentCols struct {
+	run, workflow, step sql.NullString
+	item                sql.NullInt64
+}
+
+func (p parentCols) value() *run.Parent {
+	if !p.run.Valid {
+		return nil
+	}
+	out := &run.Parent{RunID: p.run.String, WorkflowName: p.workflow.String, StepID: p.step.String}
+	if p.item.Valid {
+		i := int(p.item.Int64)
+		out.Item = &i
+	}
+	return out
 }
 
 func (s *Runs) List(ctx context.Context, f run.ListFilter) ([]run.Summary, error) {
@@ -138,27 +186,39 @@ func (s *Runs) List(ctx context.Context, f run.ListFilter) ([]run.Summary, error
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	query := `
-		SELECT id, workflow_id, workflow_name, status, error,
-		       json_array_length(definition, '$.steps'), created_at, started_at, finished_at
-		FROM runs`
 	var where []string
 	args := []any{}
 	if f.WorkflowID != "" {
-		where = append(where, `workflow_id = ?`)
+		where = append(where, `runs.workflow_id = ?`)
 		args = append(args, f.WorkflowID)
 	}
 	if f.Status != "" {
-		where = append(where, `status = ?`)
+		where = append(where, `runs.status = ?`)
 		args = append(args, f.Status)
 	}
+	if f.TopLevel {
+		where = append(where, `runs.parent_run_id IS NULL`)
+	}
+	query := ""
 	if len(where) > 0 {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
-	query += ` ORDER BY created_at DESC LIMIT ?`
+	query += ` ORDER BY runs.created_at DESC LIMIT ?`
 	args = append(args, limit)
+	return s.summaries(ctx, query, args...)
+}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+func (s *Runs) Children(ctx context.Context, id string) ([]run.Summary, error) {
+	return s.summaries(ctx, ` WHERE runs.parent_run_id = ? ORDER BY runs.created_at`, id)
+}
+
+// summaries lists runs; tail is the WHERE/ORDER BY part of the query.
+func (s *Runs) summaries(ctx context.Context, tail string, args ...any) ([]run.Summary, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT runs.id, runs.workflow_id, runs.workflow_name, runs.status, runs.error,
+		       json_array_length(runs.definition, '$.steps'), runs.created_at, runs.started_at, runs.finished_at,
+		       `+parentSelect+`
+		FROM runs `+parentJoin+tail, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list runs: %w", err)
 	}
@@ -169,10 +229,13 @@ func (s *Runs) List(ctx context.Context, f run.ListFilter) ([]run.Summary, error
 		var r run.Summary
 		var created string
 		var started, finished sql.NullString
+		var parent parentCols
 		if err := rows.Scan(&r.ID, &r.WorkflowID, &r.WorkflowName, &r.Status, &r.Error,
-			&r.StepCount, &created, &started, &finished); err != nil {
+			&r.StepCount, &created, &started, &finished,
+			&parent.run, &parent.workflow, &parent.step, &parent.item); err != nil {
 			return nil, fmt.Errorf("scan run: %w", err)
 		}
+		r.Parent = parent.value()
 		if r.CreatedAt, err = parseTime(created); err != nil {
 			return nil, err
 		}
@@ -196,9 +259,16 @@ func (s *Runs) SetRunStatus(ctx context.Context, id string, status run.Status) e
 	return s.exec(ctx, `UPDATE runs SET status = ? WHERE id = ?`, status, id)
 }
 
-func (s *Runs) FinishRun(ctx context.Context, id string, status run.Status, errMsg string, at time.Time) error {
-	return s.exec(ctx, `UPDATE runs SET status = ?, error = ?, finished_at = ? WHERE id = ?`,
-		status, errMsg, formatTime(at), id)
+func (s *Runs) FinishRun(ctx context.Context, id string, status run.Status, outputs map[string]any, errMsg string, at time.Time) error {
+	if outputs == nil {
+		outputs = map[string]any{}
+	}
+	data, err := json.Marshal(outputs)
+	if err != nil {
+		return fmt.Errorf("encode outputs: %w", err)
+	}
+	return s.exec(ctx, `UPDATE runs SET status = ?, outputs = ?, error = ?, finished_at = ? WHERE id = ?`,
+		status, string(data), errMsg, formatTime(at), id)
 }
 
 func (s *Runs) StartStep(ctx context.Context, runID, stepID string, status run.Status, config json.RawMessage, at time.Time) error {
@@ -303,10 +373,17 @@ func (s *Runs) FailUnfinished(ctx context.Context, msg string, at time.Time) (in
 	}
 	defer tx.Rollback()
 
-	// Runs to fail: unfinished, with no step waiting for approval.
+	// Runs to fail: unfinished, with no step waiting for approval, in them
+	// or in a run they started (at any depth).
 	const doomed = `
+		WITH RECURSIVE keep (id) AS (
+			SELECT run_id FROM step_runs WHERE status = 'waiting'
+			UNION
+			SELECT runs.parent_run_id FROM runs JOIN keep ON runs.id = keep.id
+			WHERE runs.parent_run_id IS NOT NULL
+		)
 		SELECT id FROM runs WHERE status IN ('queued', 'running', 'waiting')
-		AND NOT EXISTS (SELECT 1 FROM step_runs WHERE run_id = runs.id AND status = 'waiting')`
+		AND id NOT IN (SELECT id FROM keep)`
 	ts := formatTime(at)
 	_, err = tx.ExecContext(ctx, `
 		UPDATE step_runs SET status = ?, error = ?, finished_at = ?

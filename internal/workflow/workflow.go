@@ -26,8 +26,20 @@ type Workflow struct {
 type Definition struct {
 	SchemaVersion int     `json:"schemaVersion"`
 	Inputs        []Input `json:"inputs"`
-	Steps         []Step  `json:"steps"`
-	Edges         []Edge  `json:"edges"`
+	// Outputs are what a run of this workflow produces, for a workflow that
+	// runs it as a step.
+	Outputs []Output `json:"outputs,omitempty"`
+	Steps   []Step   `json:"steps"`
+	Edges   []Edge   `json:"edges"`
+}
+
+// Output is a value a workflow hands back when it succeeds. Value is an
+// expression (without {{ }}) evaluated once every step has finished, so it
+// keeps its type: a list stays a list.
+type Output struct {
+	Name        string `json:"name"`
+	Value       string `json:"value"`
+	Description string `json:"description,omitempty"`
 }
 
 // Step is a configured block. ID is unique within the workflow and is how
@@ -106,12 +118,15 @@ type Edge struct {
 	To   string `json:"to"`
 }
 
-// Summary is a lightweight view for listings.
+// Summary is a lightweight view for listings. Inputs and outputs are
+// included so a workflow can be offered as a step without loading it.
 type Summary struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	StepCount   int       `json:"stepCount"`
+	Inputs      []Input   `json:"inputs"`
+	Outputs     []Output  `json:"outputs"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
@@ -130,6 +145,8 @@ type Repository interface {
 	// ErrConflict unless the stored workflow still has that UpdatedAt.
 	Update(ctx context.Context, w Workflow, ifUnchangedSince *time.Time) (Workflow, error)
 	Delete(ctx context.Context, id string) error
+	// Callers lists workflows with a step that runs workflow id.
+	Callers(ctx context.Context, id string) ([]Summary, error)
 }
 
 // EmptyDefinition returns a definition with no steps, ready to be saved.

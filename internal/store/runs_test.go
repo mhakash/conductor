@@ -53,7 +53,7 @@ func TestRunLifecycle(t *testing.T) {
 		t.Errorf("appended seqs = %d, %d", appended[0].Seq, appended[1].Seq)
 	}
 	must(t, s.FinishStep(ctx, r.ID, "tag", run.StatusSucceeded, json.RawMessage(`{"exitCode":0}`), "", now))
-	must(t, s.FinishRun(ctx, r.ID, run.StatusSucceeded, "", now))
+	must(t, s.FinishRun(ctx, r.ID, run.StatusSucceeded, map[string]any{"version": "1.4.0"}, "", now))
 
 	got, err := s.Get(ctx, r.ID)
 	if err != nil {

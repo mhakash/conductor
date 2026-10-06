@@ -17,8 +17,10 @@ import (
 )
 
 // runStep runs one step that does work: once, or once per item, retrying
-// failures as its settings allow. It runs in its own goroutine.
-func (rn *runner) runStep(s workflow.Step, exprEnv map[string]any) stepResult {
+// failures as its settings allow. It runs in its own goroutine. resuming
+// means it was running when Conductor stopped (only steps that run a
+// workflow carry on like this).
+func (rn *runner) runStep(s workflow.Step, exprEnv map[string]any, resuming bool) stepResult {
 	res := stepResult{id: s.ID}
 
 	// A step waits in the queue for a free slot before it counts as started.
@@ -70,6 +72,9 @@ func (rn *runner) runStep(s workflow.Step, exprEnv map[string]any) stepResult {
 	}
 
 	startedAt := rn.e.now()
+	if st := rn.stored[s.ID]; resuming && st.StartedAt != nil {
+		startedAt = *st.StartedAt
+	}
 	res.startedAt = &startedAt
 	if err := rn.e.runs.StartStep(rn.store, rn.r.ID, s.ID, run.StatusRunning, res.config, startedAt); err != nil {
 		rn.log.Error("start step", "step", s.ID, "err", err)
@@ -79,7 +84,13 @@ func (rn *runner) runStep(s workflow.Step, exprEnv map[string]any) stepResult {
 	}
 	rn.publishStep(res, run.StatusRunning)
 
+	// runFunc returns what runs the step (or item i of it).
 	b, _ := rn.e.blocks.Get(s.Block)
+	runFunc := func(*int) block.RunFunc { return b.Run }
+	if s.Block == workflow.CallBlock {
+		runFunc = rn.newCalls(s, resuming).runFunc
+	}
+
 	env, flush := rn.sink.envFor(s.ID, nil)
 	switch {
 	case setupErr != nil:
@@ -87,10 +98,10 @@ func (rn *runner) runStep(s workflow.Step, exprEnv map[string]any) stepResult {
 	case s.ForEach != nil:
 		held = false
 		rn.release() // items take their own slots
-		res.outputs, res.status, res.err = rn.runItems(s, b, items, configs, &res)
+		res.outputs, res.status, res.err = rn.runItems(s, runFunc, items, configs, &res)
 	default:
 		var attempt int
-		res.outputs, res.status, res.err, attempt = rn.try(s, b, configs[0], env, flush, &held, func(n int) {
+		res.outputs, res.status, res.err, attempt = rn.try(s, runFunc(nil), configs[0], env, flush, &held, func(n int) {
 			res.progress.Attempt = n
 			rn.saveProgress(s.ID, res.progress)
 			rn.publishStep(res, run.StatusRunning)
@@ -100,6 +111,8 @@ func (rn *runner) runStep(s workflow.Step, exprEnv map[string]any) stepResult {
 		}
 	}
 	switch {
+	case res.status == statusSuspended:
+		res.suspended, res.waits = true, true
 	case res.err != "":
 		env.Logf("%s", res.err)
 	case res.status == run.StatusCancelled:
@@ -109,10 +122,10 @@ func (rn *runner) runStep(s workflow.Step, exprEnv map[string]any) stepResult {
 	return res
 }
 
-// try runs config through the block, retrying failures if the step allows.
+// try runs config through fn, retrying failures if the step allows.
 // *held says whether the caller's slot is still taken; try releases it while
 // waiting to retry. onRetry is called with the number of each new attempt.
-func (rn *runner) try(s workflow.Step, b block.Block, config json.RawMessage, env block.Env, flush func(), held *bool, onRetry func(n int)) (map[string]any, run.Status, string, int) {
+func (rn *runner) try(s workflow.Step, fn block.RunFunc, config json.RawMessage, env block.Env, flush func(), held *bool, onRetry func(n int)) (map[string]any, run.Status, string, int) {
 	attempts := 1
 	if s.Retry != nil {
 		attempts += s.Retry.Max
@@ -130,7 +143,7 @@ func (rn *runner) try(s workflow.Step, b block.Block, config json.RawMessage, en
 			*held = true
 		}
 		stepCtx, cancel := context.WithTimeout(rn.ctx, timeout)
-		outputs, err := safeRun(stepCtx, b.Run, config, env)
+		outputs, err := safeRun(stepCtx, fn, config, env)
 		timedOut := errors.Is(stepCtx.Err(), context.DeadlineExceeded)
 		cancel()
 		flush()
@@ -138,10 +151,14 @@ func (rn *runner) try(s workflow.Step, b block.Block, config json.RawMessage, en
 		status, msg := run.StatusSucceeded, ""
 		switch {
 		case err == nil:
+		case errors.Is(err, errSuspended):
+			return nil, statusSuspended, "", n
 		case rn.ctx.Err() != nil:
 			status, msg = run.StatusCancelled, cancelReason(rn.ctx)
 		case timedOut:
 			status, msg = run.StatusFailed, fmt.Sprintf("timed out after %s", timeout)
+		case errors.Is(err, errChildCancelled):
+			status, msg = run.StatusCancelled, err.Error()
 		default:
 			status, msg = run.StatusFailed, err.Error()
 		}
@@ -166,7 +183,7 @@ func (rn *runner) try(s workflow.Step, b block.Block, config json.RawMessage, en
 // runItems runs the step once per item, up to its concurrency at a time.
 // The first failure stops items that haven't started; the step's outputs
 // are the items' outputs in order, under "results".
-func (rn *runner) runItems(s workflow.Step, b block.Block, items []any, configs []json.RawMessage, res *stepResult) (map[string]any, run.Status, string) {
+func (rn *runner) runItems(s workflow.Step, runFunc func(item *int) block.RunFunc, items []any, configs []json.RawMessage, res *stepResult) (map[string]any, run.Status, string) {
 	concurrency := max(s.ForEach.Concurrency, 1)
 	results := make([]any, len(items))
 	if len(items) == 0 {
@@ -204,7 +221,7 @@ func (rn *runner) runItems(s workflow.Step, b block.Block, items []any, configs 
 			env, flush := rn.sink.envFor(s.ID, &i)
 			env.Logf("Item %d of %d: %s", i+1, len(items), describe(items[i]))
 			held := false
-			out, st, msg, _ := rn.try(s, b, configs[i], env, flush, &held, func(int) {})
+			out, st, msg, _ := rn.try(s, runFunc(&i), configs[i], env, flush, &held, func(int) {})
 			if held {
 				rn.release()
 			}
@@ -219,11 +236,14 @@ func (rn *runner) runItems(s workflow.Step, b block.Block, items []any, configs 
 				out = map[string]any{}
 			}
 			results[i] = out
-			if st == run.StatusSucceeded {
+			switch {
+			case st == statusSuspended:
+				status = st // takes precedence: the step must carry on after a restart
+			case st == run.StatusSucceeded:
 				res.progress.ItemsDone++
 				rn.saveProgress(s.ID, res.progress)
 				rn.publishStep(*res, run.StatusRunning)
-			} else if status == run.StatusSucceeded {
+			case status == run.StatusSucceeded:
 				status = st
 				failure = fmt.Sprintf("item %d of %d: %s", i+1, len(items), msg)
 				if st == run.StatusCancelled {
@@ -305,7 +325,7 @@ func (rn *runner) await(s workflow.Step, config json.RawMessage, startedAt time.
 	go func() {
 		defer stop()
 		defer rn.e.removeApproval(rn.r.ID, s.ID)
-		res := stepResult{id: s.ID, config: config, startedAt: &startedAt, approval: true}
+		res := stepResult{id: s.ID, config: config, startedAt: &startedAt}
 		env, flush := rn.sink.envFor(s.ID, nil)
 		select {
 		case d := <-decisions:
@@ -327,7 +347,7 @@ func (rn *runner) await(s workflow.Step, config json.RawMessage, startedAt time.
 			env.Logf("%s", res.err)
 		case <-rn.ctx.Done():
 			if errors.Is(context.Cause(rn.ctx), errShutdown) {
-				res.suspended = true
+				res.suspended, res.waits = true, true
 			} else {
 				res.status, res.err = run.StatusCancelled, cancelReason(rn.ctx)
 			}
