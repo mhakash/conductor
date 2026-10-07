@@ -126,10 +126,14 @@ type LogLine struct {
 
 type ListFilter struct {
 	WorkflowID string
-	Status     Status
+	// Scratch keeps only runs of unsaved workflows; WorkflowID is ignored.
+	Scratch bool
+	Status  Status
 	// TopLevel leaves out runs started by other runs.
 	TopLevel bool
 	Limit    int
+	// Offset skips that many of the newest matching runs, for paging.
+	Offset int
 }
 
 var ErrNotFound = errors.New("run not found")

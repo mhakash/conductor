@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import type { Definition, WorkflowFields } from '@/features/workflows/api'
 import { api } from '@/lib/api'
@@ -90,6 +90,7 @@ export const runKeys = {
   all: ['runs'] as const,
   lists: ['runs', 'list'] as const,
   list: (workflowId?: string) => ['runs', 'list', workflowId ?? 'all'] as const,
+  page: (f: RunPageFilter) => ['runs', 'list', 'page', f] as const,
   one: (id: string) => ['runs', id] as const,
   logs: (id: string) => ['runs', id, 'logs'] as const,
 }
@@ -107,6 +108,41 @@ export function useRuns(workflowId?: string) {
         signal,
       }),
     refetchInterval: (q) => (q.state.data?.some((r) => isActive(r.status)) ? LIST_POLL_MS : false),
+  })
+}
+
+export type RunPageFilter = {
+  workflowId?: string
+  /** Only runs of unsaved workflows; workflowId is ignored. */
+  scratch?: boolean
+  status?: RunStatus
+  /** Zero-based. */
+  page: number
+  pageSize: number
+}
+
+/**
+ * One page of the runs list, filtered like useRuns. Asks for one run more
+ * than the page holds to learn whether there is a next page.
+ */
+export function useRunPage(f: RunPageFilter) {
+  return useQuery({
+    queryKey: keys.page(f),
+    queryFn: async ({ signal }) => {
+      const q = new URLSearchParams({
+        limit: String(f.pageSize + 1),
+        offset: String(f.page * f.pageSize),
+      })
+      if (f.scratch) q.set('scratch', 'true')
+      else if (f.workflowId) q.set('workflowId', f.workflowId)
+      else q.set('topLevel', 'true')
+      if (f.status) q.set('status', f.status)
+      const runs = await api.get<RunSummary[]>(`/runs?${q}`, { signal })
+      return { runs: runs.slice(0, f.pageSize), hasNext: runs.length > f.pageSize }
+    },
+    placeholderData: keepPreviousData,
+    refetchInterval: (q) =>
+      q.state.data?.runs.some((r) => isActive(r.status)) ? LIST_POLL_MS : false,
   })
 }
 

@@ -69,11 +69,14 @@ func (s *Server) handleStartScratchRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	list, err := s.runs.List(r.Context(), run.ListFilter{
 		WorkflowID: r.URL.Query().Get("workflowId"),
+		Scratch:    r.URL.Query().Get("scratch") == "true",
 		Status:     run.Status(r.URL.Query().Get("status")),
 		TopLevel:   r.URL.Query().Get("topLevel") == "true",
 		Limit:      limit,
+		Offset:     offset,
 	})
 	if err != nil {
 		s.internalError(w, r, err)

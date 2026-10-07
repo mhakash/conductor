@@ -188,7 +188,9 @@ func (s *Runs) List(ctx context.Context, f run.ListFilter) ([]run.Summary, error
 	}
 	var where []string
 	args := []any{}
-	if f.WorkflowID != "" {
+	if f.Scratch {
+		where = append(where, `runs.workflow_id = ''`)
+	} else if f.WorkflowID != "" {
 		where = append(where, `runs.workflow_id = ?`)
 		args = append(args, f.WorkflowID)
 	}
@@ -203,8 +205,8 @@ func (s *Runs) List(ctx context.Context, f run.ListFilter) ([]run.Summary, error
 	if len(where) > 0 {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
-	query += ` ORDER BY runs.created_at DESC LIMIT ?`
-	args = append(args, limit)
+	query += ` ORDER BY runs.created_at DESC, runs.id DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, max(f.Offset, 0))
 	return s.summaries(ctx, query, args...)
 }
 

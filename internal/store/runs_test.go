@@ -91,6 +91,16 @@ func TestRunLifecycle(t *testing.T) {
 	if len(list) != 1 || list[0].StepCount != 2 {
 		t.Errorf("list = %+v", list)
 	}
+	if page, _ := s.List(ctx, run.ListFilter{WorkflowID: "wf1", Offset: 1}); len(page) != 0 {
+		t.Errorf("list past the end = %+v", page)
+	}
+	scratch, err := s.Create(ctx, run.Run{WorkflowName: "Scratch", Definition: def})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.List(ctx, run.ListFilter{Scratch: true}); len(got) != 1 || got[0].ID != scratch.ID {
+		t.Errorf("scratch list = %+v", got)
+	}
 	if _, err := s.Get(ctx, "missing"); !errors.Is(err, run.ErrNotFound) {
 		t.Errorf("get missing: %v", err)
 	}
