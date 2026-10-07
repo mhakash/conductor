@@ -1,5 +1,6 @@
 import {
   ArrowUpRight,
+  Braces,
   ChevronLeft,
   CornerLeftUp,
   Hand,
@@ -75,6 +76,10 @@ function RunView({ run }: { run: Run }) {
   const now = useNow(active)
   const [params, setParams] = useSearchParams()
   const select = (id: string) => setParams({ step: id }, { replace: true })
+  const inputs = Object.entries(run.inputs ?? {})
+  const outputs = Object.entries(run.outputs ?? {})
+  const hasValues = inputs.length > 0 || outputs.length > 0
+  const showValues = hasValues && params.get('view') === 'values'
 
   const order = useMemo(() => executionOrder(run.definition), [run.definition])
   // Steps that run a workflow show as waiting while that run waits for approval.
@@ -90,12 +95,13 @@ function RunView({ run }: { run: Run }) {
   // a failure, a step waiting for you, the step in progress, or — once done —
   // where the run ended.
   const waiting = steps.find((s) => s.status === 'waiting')
-  const selectedId =
-    params.get('step') ??
-    steps.find((s) => s.status === 'failed' && !defs.get(s.stepId)?.continueOnError)?.stepId ??
-    waiting?.stepId ??
-    steps.findLast((s) => s.status === 'running')?.stepId ??
-    (active ? order[0]?.id : order.at(-1)?.id)
+  const selectedId = showValues
+    ? undefined
+    : (params.get('step') ??
+      steps.find((s) => s.status === 'failed' && !defs.get(s.stepId)?.continueOnError)?.stepId ??
+      waiting?.stepId ??
+      steps.findLast((s) => s.status === 'running')?.stepId ??
+      (active ? order[0]?.id : order.at(-1)?.id))
   const selected = selectedId ? stepRuns.get(selectedId) : undefined
 
   const took = elapsed(run.startedAt, run.finishedAt, now)
@@ -109,9 +115,6 @@ function RunView({ run }: { run: Run }) {
   return (
     <div className="flex h-full flex-col">
       <RunHeader run={run} took={took} live={live} />
-
-      <Values title="Inputs" values={run.inputs} />
-      <Values title="Outputs" values={run.outputs} />
 
       {run.error && (
         <p className="border-b border-line bg-coral/5 px-4 py-2.5 text-coral md:px-6">
@@ -142,6 +145,21 @@ function RunView({ run }: { run: Run }) {
           aria-label="Steps"
           className="max-h-60 shrink-0 overflow-y-auto border-b border-line bg-surface p-2 md:max-h-none md:w-72 md:border-r md:border-b-0"
         >
+          {hasValues && (
+            <button
+              aria-current={showValues ? 'true' : undefined}
+              onClick={() => setParams({ view: 'values' }, { replace: true })}
+              className="mb-1 flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-hover/60 aria-[current=true]:bg-hover"
+            >
+              <Braces className="mt-0.5 size-4 shrink-0 text-fg-subtle" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-fg">Inputs and outputs</span>
+                <span className="block truncate font-mono text-[11px] text-fg-subtle">
+                  {countLabel(inputs.length, 'input')} · {countLabel(outputs.length, 'output')}
+                </span>
+              </span>
+            </button>
+          )}
           <ol className="flex flex-col gap-0.5">
             {order.map(({ id, after }) => {
               const sr = stepRuns.get(id)
@@ -173,6 +191,7 @@ function RunView({ run }: { run: Run }) {
         </nav>
 
         <section className="min-w-0 flex-1 overflow-y-auto">
+          {showValues && <RunValues inputs={inputs} outputs={outputs} />}
           {selected && (
             <StepDetail
               key={selected.stepId}
@@ -194,20 +213,33 @@ function RunView({ run }: { run: Run }) {
   )
 }
 
-/** A run's inputs or outputs, on one line under the header. */
-function Values({ title, values }: { title: string; values: Record<string, unknown> | undefined }) {
-  if (!values || Object.keys(values).length === 0) return null
+/** The run's inputs and outputs, in the detail pane. */
+function RunValues({
+  inputs,
+  outputs,
+}: {
+  inputs: [string, unknown][]
+  outputs: [string, unknown][]
+}) {
   return (
-    <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line px-4 py-2 md:px-6">
-      <dt className="text-[11px] font-medium tracking-wide text-fg-subtle uppercase">{title}</dt>
-      {Object.entries(values).map(([k, v]) => (
-        <dd key={k} className="max-w-full truncate font-mono text-xs">
-          <span className="text-fg-subtle">{k}=</span>
-          <span className="text-fg">{typeof v === 'string' ? v : JSON.stringify(v)}</span>
-        </dd>
-      ))}
-    </dl>
+    <div className="flex flex-col gap-5 p-4 md:p-6">
+      <h2 className="text-base font-medium text-fg">Inputs and outputs</h2>
+      {inputs.length > 0 && (
+        <Panel title="Inputs">
+          <KeyValues entries={inputs} />
+        </Panel>
+      )}
+      {outputs.length > 0 && (
+        <Panel title="Outputs">
+          <KeyValues entries={outputs} />
+        </Panel>
+      )}
+    </div>
   )
+}
+
+function countLabel(n: number, noun: string) {
+  return `${n === 0 ? 'no' : n} ${noun}${n === 1 ? '' : 's'}`
 }
 
 function RunHeader({ run, took, live }: { run: Run; took: number | null; live: boolean }) {
