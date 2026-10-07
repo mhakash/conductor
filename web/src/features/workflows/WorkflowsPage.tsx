@@ -70,7 +70,7 @@ function EmptyState() {
         <h2 className="text-base font-medium text-fg">No workflows yet</h2>
         <p className="mt-2 text-fg-muted">
           A workflow is a graph of steps. A step starts when everything it depends on has finished,
-          so independent steps — like the release notes and tickets above — run in parallel.
+          so steps that don't depend on each other run in parallel.
         </p>
       </div>
     </section>
