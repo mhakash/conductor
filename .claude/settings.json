@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(make test)",
+      "Bash(make lint)",
+      "Bash(make fmt)",
+      "Bash(make build)",
+      "Bash(go test:*)",
+      "Bash(go vet:*)",
+      "Bash(go build:*)",
+      "Bash(gofmt:*)",
+      "Bash(pnpm --dir web typecheck)",
+      "Bash(pnpm --dir web test:*)",
+      "Bash(pnpm --dir web lint)",
+      "Bash(pnpm --dir web format)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)"
+    ],
+    "deny": [
+      "Read(./.data/**)",
+      "Read(./bin/**)",
+      "Read(./web/dist/**)",
+      "Read(./web/node_modules/**)",
+      "Read(./web/pnpm-lock.yaml)",
+      "Read(./go.sum)"
+    ]
+  }
+}

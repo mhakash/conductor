@@ -4,7 +4,7 @@ A personal workflow builder and task runner. Workflows are graphs of steps —
 shell commands, HTTP calls, scripts, git and Jira operations — that run with
 dependencies and parallelism, and are edited and watched on a visual canvas.
 
-Status and plans: [docs/ROADMAP.md](docs/ROADMAP.md). Design decisions:
+Docs index: [docs/README.md](docs/README.md). Status and plans: [docs/ROADMAP.md](docs/ROADMAP.md). Decisions:
 [docs/adr](docs/adr).
 
 ## Requirements
@@ -37,5 +37,5 @@ cmd/conductor     entrypoint
 internal/config   flags and environment
 internal/server   HTTP routes, middleware, UI serving
 web/              React app (Vite, Tailwind, React Flow); embed.go exposes the build
-docs/             roadmap and decision records
+docs/             index, architecture maps, recipes, YAML reference, ADRs
 ```

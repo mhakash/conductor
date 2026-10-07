@@ -10,10 +10,10 @@ import (
 	"conductor/internal/workflow"
 )
 
-// docs/workflow-yaml.md is how people and agents learn to write workflows,
+// docs/reference/workflow-yaml.md is how people and agents learn to write workflows,
 // so it must stay true: its examples import, and every block and field is
 // described.
-const docPath = "../../docs/workflow-yaml.md"
+const docPath = "../../docs/reference/workflow-yaml.md"
 
 var yamlBlock = regexp.MustCompile("(?s)```yaml\n(.*?)```")
 

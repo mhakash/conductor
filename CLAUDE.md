@@ -1,185 +1,45 @@
 # Conductor
 
-Personal workflow builder and task runner: workflows are DAGs of steps that run
-on the host with dependencies and parallelism, edited and watched on a visual
-canvas. Local, single user, no auth.
+Local, single-user workflow builder: workflows are DAGs of steps run on the
+host, edited and watched on a canvas. Go API (`internal/`) + React UI (`web/`).
 
-- Plan and progress: `docs/ROADMAP.md`. Decisions: `docs/adr/`.
-- Writing workflows as YAML (every block, field, setting and expression
-  rule): `docs/workflow-yaml.md`. Read it before creating a workflow file.
-- Vocabulary (use it in code, UI and docs): **block** = node type, **step** =
-  configured block in a workflow, **workflow**, **run**, **expression**. See the
-  table in the roadmap.
+Vocabulary (code, UI, docs): **block** = node type, **step** = configured
+block in a workflow, **workflow**, **run**, **expression**.
 
-## Working style
+## Where to look
 
-- Build one roadmap phase at a time. Each phase ends in something visible and
-  usable; stop for review before starting the next.
-- When a phase lands, tick it in `docs/ROADMAP.md`. Record non-obvious choices
-  (storage format, libraries, execution model) as a new ADR.
-- Prefer established libraries over hand-rolled code. No placeholder features,
-  filler copy or speculative abstractions.
-- Keep `docs/workflow-yaml.md` current in the same change whenever blocks,
-  their fields or outputs, step settings, inputs/outputs, expression rules,
-  validation limits or the YAML format change. `go test ./internal/wfyaml`
-  fails if an example stops importing or a block field is undocumented.
-- Commit messages describe the change; no "Phase N" prefixes.
+Start at [docs/README.md](docs/README.md); open only the doc you need.
+
+- Code map: [backend](docs/architecture/backend.md), [frontend](docs/architecture/frontend.md)
+- How-to (add a block, route, migration, page): [docs/guides/recipes.md](docs/guides/recipes.md)
+- Workflow YAML format (read before writing a workflow file): [docs/reference/workflow-yaml.md](docs/reference/workflow-yaml.md)
+- Why things are the way they are: [docs/adr/README.md](docs/adr/README.md)
+- Plan and progress: [docs/ROADMAP.md](docs/ROADMAP.md)
+
+Backend/frontend conventions and gotchas load automatically from
+`.claude/rules/` when you touch matching files.
 
 ## Commands
 
 ```sh
-make dev        # Go API :7070 (data in ./.data) + Vite :5180 (proxies /api)
-make test       # go test ./... + tsc + vitest
-make lint       # go vet + oxlint
-make fmt        # gofmt + prettier
-make build      # ./bin/conductor with UI embedded
+make dev     # API :7070 (data in ./.data) + Vite :5180
+make test    # go test ./... + tsc + vitest
+make lint    # go vet + oxlint
+make fmt     # gofmt + prettier
+make build   # ./bin/conductor with UI embedded
 ```
 
-Frontend-only: `cd web && pnpm <dev|build|typecheck|test|lint|format>`.
+Narrow first: `go test ./internal/<pkg>`, `cd web && pnpm test <file>`.
 
-## Layout
+## Working style
 
-```
-cmd/conductor      entrypoint: config, logger, HTTP server, graceful shutdown
-internal/config    flags + CONDUCTOR_* env vars
-internal/workflow  domain types, Repository interface, structural validation,
-                   sub-workflow calls (calls.go)
-internal/preset    saved step configurations (presets) and their validation
-internal/block     block descriptors (fields, outputs) + executors (RunFunc); builtin
-                   registry; process.go runs shell/script steps on the host or
-                   in Docker
-internal/wfyaml    workflows as YAML: encode/decode, needs ↔ edges, layout
-internal/run       run/step/log types and the run Repository interface
-internal/engine    DAG scheduler (execute.go), step attempts/loops/approvals
-                   (step.go), sub-workflow child runs (subrun.go), batched
-                   logs, resuming runs after a restart
-internal/events    in-process broker fanning run events out to SSE streams
-internal/tmpl      {{ expr }} templates: compile, render, reference extraction
-internal/secrets   AES-GCM cipher, keychain key, secret store, output masker
-internal/store     SQLite (modernc) + goose migrations in store/migrations
-internal/server    chi routes, middleware, SPA handler; tests hit a real temp DB
-internal/version   ldflags-injected build info
-web/embed*.go      `embedui` build tag embeds web/dist; without it UI() is nil
-web/src/
-  app/             router
-  components/ui    small primitives (Button, Tooltip on Radix)
-  components/layout app shell, sidebar, page header
-  components/flow  StepCard + StepTraits: the step visual shared by editor and
-                   run graph
-  features/<area>  feature folders: pages, hooks, components for one area
-    workflows/     list page, query hooks + API types (api.ts)
-    blocks/        block descriptors from /api/blocks, icons
-    editor/        canvas editor: Zustand store, graph helpers (tested), ELK
-                   layout, library panel (library.ts, Palette.tsx), inspector,
-                   generated config fields, test-run panel (RunPanel.tsx),
-                   scratch page (ScratchPage.tsx, scratch.ts)
-    presets/       preset API hooks, save/rename dialog
-    library/       Library page: presets and the block reference
-    runs/          runs list, run page (live graph, steps, logs, outputs),
-                   SSE stream hook (stream.ts), run dialog for inputs
-    secrets/       secrets page (values are write-only)
-  lib/             api client, cn()
-  styles/index.css Tailwind v4 @theme design tokens
-```
-
-## Backend conventions
-
-- Go module path is `conductor`. Standard library first; `chi` for routing,
-  `log/slog` for logging.
-- API lives under `/api`, returns JSON; errors are `{"error": "..."}` via
-  `writeError`. Unknown `/api/*` routes are JSON 404s, never the SPA.
-  Validation failures are 422 with `problems: [{message, step?, edge?}]`.
-- A workflow's graph is one versioned JSON document (see ADR 0002). New
-  migrations go in `internal/store/migrations` as `NNNNN_name.sql`.
-- Adding a block = a `block.Block` (fields, outputs, `Run`) in
-  `internal/block`; the UI renders its config form from the field list, no
-  frontend change needed. `Run` must honour ctx cancellation. Commands go
-  through `runProcess` (process.go) for login-shell PATH, process groups,
-  `$CONDUCTOR_OUTPUTS` results and the Docker image option (ADR 0008).
-- Fields marked `Literal` (script code) are never treated as expressions;
-  pass `blocks.Literal(type)` to `tmpl.RenderConfig`/`ConfigRefs`.
-  `workflow.Validate` takes the registry for this.
-- Execution semantics (skip downstream on failure, timeouts, login shell,
-  process groups) are in ADR 0003; conditions, retries, continue-on-error,
-  loops and approvals in ADR 0006. Keep them in sync when changing the engine.
-- Per-step settings (`if`, `retry`, `continueOnError`, `forEach`, `timeout`)
-  live on `workflow.Step`, not in block config. The `approval` and
-  `workflow` blocks have no `RunFunc`; the engine runs them.
-- A `workflow` step runs another workflow as a child run (ADR 0007). Saves
-  are checked with `workflow.ValidateCalls` too, which needs the other
-  workflows; runs list top-level runs unless filtered by workflow.
-- A run waiting for approval must survive restarts: Shutdown leaves it
-  waiting and `Engine.Recover` resumes it at startup. Anything new that a
-  run holds in memory must be rebuildable from the store.
-- Engine and block tests run with `go test -race`; keep them race-clean.
-- Expressions, inputs and secrets: ADR 0005. Anything a step reads must be
-  checked at save time (workflow.Validate) and resolved in the engine just
-  before the step runs. Anything stored or published about a run goes
-  through the run's secret masker.
-- Live updates: the engine publishes a `run.Event` after every store write;
-  `/api/runs/{id}/events` streams snapshot + deltas (ADR 0004). New run state
-  must be both stored and published.
-- Server binds to `127.0.0.1` by default. Steps run on the host (Docker opt-in
-  later).
-
-## Frontend conventions
-
-- React 19 + TS, Tailwind v4, React Router v8, TanStack Query for server state,
-  Zustand for client state, `motion` for animation, `lucide-react` icons,
-  React Flow (`@xyflow/react`) for the canvas, CodeMirror for code fields.
-- Heavy pages and libraries load lazily (editor route, elkjs).
-- Import via the `@/` alias. Prettier: no semicolons, single quotes, width 100,
-  Tailwind class sorting.
-- Colours come only from tokens in `styles/index.css` (`canvas`, `surface`,
-  `raised`, `hover`, `line`, `fg*`, `brass`, `sage`, `coral`, `steel`). No raw
-  hex in components. Brass marks activity; sage/coral/steel are reserved for
-  run status.
-- Fonts: Geist (UI), Geist Mono (data, logs, block names), Instrument Serif
-  italic for the wordmark only.
-- Respect reduced motion (`MotionConfig reducedMotion="user"`,
-  `useReducedMotion`, `motion-reduce:`). Keep visible focus rings.
-- UI copy: sentence case, plain verbs, buttons name the action.
-
-## Gotchas
-
-- **pnpm version is pinned** (`packageManager` in `web/package.json`). The
-  machine has a global pnpm 11 that, without the pin, tries to purge
-  `node_modules` in non-TTY shells (e.g. under `make`).
-- **Vite runs on 5180** (`strictPort`); 5173 is used by another project.
-- The `workflow` block's config form uses two field types the frontend
-  renders specially (`workflow`, `inputs`), and its outputs come from the
-  called workflow's summary (`useWorkflowMap`), not the block descriptor.
-- **Radix `asChild` + NavLink:** Slot can't merge function `className`s. Pass a
-  string and style active links with `aria-[current=page]:` variants.
-- Prettier's Tailwind plugin needs `tailwindStylesheet` to know custom tokens;
-  it's set in `.prettierrc.json`.
-- `go build` without `-tags embedui` serves API only — that's expected in dev.
-- Zustand v5: a selector that builds a new array/object (e.g. `.filter`) must
-  be wrapped in `useShallow`, or the component re-renders forever.
-- React Flow's built-in styles are imported before ours; theme overrides go
-  on `.react-flow.dark` in `styles/index.css`.
-- Block icons are a fixed map in `BlockIcon.tsx`; add new lucide icons there.
-- Config text and code fields are CodeMirror (`fields/CodeField.tsx`) so they
-  get `{{ }}` highlighting and completion; the completion scope is fed in via
-  the `setExpressionScope` effect, not read from React during render.
-- Docker tests are skipped unless `CONDUCTOR_TEST_DOCKER=1`; they need the
-  `node:24-alpine` image already pulled.
-- The gitleaks pre-commit hook scans test fixtures too; use obviously fake
-  values that don't look like real tokens.
-- A single run is kept fresh by `useRunStream` (SSE) writing into the query
-  cache, not by polling. Run lists still poll, and TanStack pauses that in
-  hidden tabs. `EventSource` gives up for good on an HTTP error (a 502 from
-  the Vite proxy while the API restarts), so `useRunStream` reconnects itself.
-- Visually hidden inputs (`sr-only`, e.g. the settings toggles) are absolutely
-  positioned: give their wrapper `relative`, or they escape the scroll
-  container and make the whole page scroll.
-- React Flow only draws edges between nodes that render `<Handle>`s; read-only
-  nodes still need (invisible) handles.
-- In a hidden browser pane React Flow can't measure nodes, so they stay
-  `visibility: hidden` and edges don't render. Verify canvases with the pane
-  visible.
-- Test runs and scratch runs post the draft to `POST /api/runs` (ADR 0010);
-  the scratch draft lives in localStorage (`conductor.scratch`), not the DB.
-- The editor's unsaved-changes blocker reads `useEditor.getState().dirty` at
-  navigation time; a boolean captured at render would block Run's
-  save-then-navigate.
+- One roadmap phase at a time; stop for review before the next. Tick it in
+  the roadmap; record non-obvious choices as a new ADR.
+- Prefer established libraries. No placeholder features or speculative
+  abstractions.
+- Changing blocks, fields, step settings, expressions or the YAML format:
+  update `docs/reference/workflow-yaml.md` in the same change
+  (`go test ./internal/wfyaml` enforces it).
+- Commit messages describe the change; no "Phase N" prefixes.
+- Keep replies short; don't paste plans, diffs or file contents the user can
+  open in their editor. No screenshots or subagents unless needed or asked.

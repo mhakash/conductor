@@ -4,7 +4,7 @@ This is the complete reference for writing a Conductor workflow as YAML by
 hand (or by an agent) and importing it: on the Workflows page (**Import**), in
 the editor (**YAML** → edit → **Apply to workflow**), or with
 `POST /api/workflows/import` (body: the YAML). Why the format looks like this
-is in [ADR 0009](adr/0009-yaml.md).
+is in [ADR 0009](../adr/0009-yaml.md).
 
 Every `yaml` example in this file is imported and validated by
 `internal/wfyaml/doc_test.go`, and that test fails if a block or config field
