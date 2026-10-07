@@ -39,7 +39,7 @@ var Approval = Block{
 	Fields: []Field{
 		{
 			Key: "message", Label: "Message", Type: FieldTextarea,
-			Placeholder: "Push {{ inputs.version }} to GitLab?",
+			Placeholder: "Release {{ inputs.version }}?",
 			Help:        "Shown on the run page while it waits. Without a timeout it waits indefinitely, even if Conductor restarts.",
 		},
 	},
@@ -175,7 +175,7 @@ var HTTP = Block{
 		},
 		{
 			Key: "url", Label: "URL", Type: FieldText, Required: true,
-			Placeholder: "https://gitlab.example.com/api/v4/projects",
+			Placeholder: "https://api.example.com/items",
 		},
 		{Key: "headers", Label: "Headers", Type: FieldKeyValue},
 		{Key: "body", Label: "Body", Type: FieldCode, Language: "json"},

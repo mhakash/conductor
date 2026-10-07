@@ -9,7 +9,7 @@ exception: it is a block, because it is a step of its own in the flow.
 
 ```jsonc
 {
-  "id": "update_jira",
+  "id": "update_tickets",
   "block": "http",
   "if": "steps.pipeline.outputs.json.status == 'success'",
   "retry": { "max": 3, "delay": "10s", "backoff": "exponential" },

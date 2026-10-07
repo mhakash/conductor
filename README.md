@@ -1,10 +1,10 @@
 # Conductor
 
 A personal workflow builder and task runner. Workflows are graphs of steps —
-shell commands, HTTP calls, scripts, git and Jira operations — that run with
+shell commands, scripts, HTTP calls, approvals and other workflows — that run with
 dependencies and parallelism, and are edited and watched on a visual canvas.
 
-Docs index: [docs/README.md](docs/README.md). Status and plans: [docs/ROADMAP.md](docs/ROADMAP.md). Decisions:
+Docs index: [docs/README.md](docs/README.md). Decisions:
 [docs/adr](docs/adr).
 
 ## Requirements

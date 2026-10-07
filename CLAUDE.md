@@ -14,7 +14,6 @@ Start at [docs/README.md](docs/README.md); open only the doc you need.
 - How-to (add a block, route, migration, page): [docs/guides/recipes.md](docs/guides/recipes.md)
 - Workflow YAML format (read before writing a workflow file): [docs/reference/workflow-yaml.md](docs/reference/workflow-yaml.md)
 - Why things are the way they are: [docs/adr/README.md](docs/adr/README.md)
-- Plan and progress: [docs/ROADMAP.md](docs/ROADMAP.md)
 
 Backend/frontend conventions and gotchas load automatically from
 `.claude/rules/` when you touch matching files.
@@ -33,8 +32,8 @@ Narrow first: `go test ./internal/<pkg>`, `cd web && pnpm test <file>`.
 
 ## Working style
 
-- One roadmap phase at a time; stop for review before the next. Tick it in
-  the roadmap; record non-obvious choices as a new ADR.
+- Record non-obvious choices (storage, libraries, execution model) as a new
+  ADR.
 - Prefer established libraries. No placeholder features or speculative
   abstractions.
 - Changing blocks, fields, step settings, expressions or the YAML format:

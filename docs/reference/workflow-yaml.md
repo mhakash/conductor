@@ -48,9 +48,9 @@ steps:
     needs: [tag]
     retry: { max: 5, delay: 30s, backoff: exponential }
     config:
-      url: "https://gitlab.example.com/api/v4/projects/42/pipelines?ref={{ steps.tag.outputs.result.tag }}"
+      url: "https://ci.example.com/api/pipelines?ref={{ steps.tag.outputs.result.tag }}"
       headers:
-        PRIVATE-TOKEN: "{{ secrets.GITLAB_TOKEN }}"
+        Authorization: "Bearer {{ secrets.CI_TOKEN }}"
   - id: approve
     name: Approve announcement
     block: approval
@@ -353,11 +353,11 @@ steps:
     block: http
     config:
       method: POST
-      url: https://jira.example.com/rest/api/2/issue
+      url: https://tracker.example.com/api/issues
       headers:
-        Authorization: "Bearer {{ secrets.JIRA_TOKEN }}"
+        Authorization: "Bearer {{ secrets.TRACKER_TOKEN }}"
       body: |
-        {"fields": {"project": {"key": "REL"}, "summary": "Release {{ run.id }}"}}
+        {"project": "REL", "summary": "Release {{ run.id }}"}
   - id: report
     block: shell
     needs: [create_issue]

@@ -30,7 +30,7 @@ func (s *Server) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	name := chi.URLParam(r, "name")
 	if !secrets.ValidName(name) {
-		writeError(w, http.StatusUnprocessableEntity, "Use UPPER_SNAKE_CASE for secret names, e.g. GITLAB_TOKEN.")
+		writeError(w, http.StatusUnprocessableEntity, "Use UPPER_SNAKE_CASE for secret names, e.g. API_TOKEN.")
 		return
 	}
 	if body.Value == "" {

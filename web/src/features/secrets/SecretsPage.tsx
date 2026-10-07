@@ -186,7 +186,7 @@ function SecretForm({
             value={draftName}
             disabled={replacing}
             autoFocus={!replacing}
-            placeholder="GITLAB_TOKEN"
+            placeholder="API_TOKEN"
             spellCheck={false}
             aria-invalid={!!nameError}
             className="font-mono text-xs"

@@ -7,7 +7,6 @@
 | Add a block, API route, migration, run state, page  | [guides/recipes.md](guides/recipes.md)                   |
 | Write or import a workflow as YAML                  | [reference/workflow-yaml.md](reference/workflow-yaml.md) |
 | Why a design is the way it is                       | [adr/README.md](adr/README.md)                           |
-| What's built, what's next                           | [ROADMAP.md](ROADMAP.md)                                 |
 
 Conventions and gotchas for agents live in `.claude/rules/` (backend,
 frontend, workflow format) and load only when matching files are touched.

@@ -2,7 +2,7 @@ import { motion, useReducedMotion } from 'motion/react'
 import { useEffect, useState } from 'react'
 
 /*
- * A looping, illustrative run of the "build preparation" workflow. Each step
+ * A looping, illustrative run of a release workflow. Each step
  * belongs to a stage; steps in the same stage run in parallel.
  */
 
@@ -12,21 +12,21 @@ const W = 128
 const H = 44
 
 const steps: Step[] = [
-  { id: 'tag', block: 'git', label: 'Create tag', x: 8, y: 98, stage: 0 },
-  { id: 'push', block: 'git', label: 'Push to GitLab', x: 172, y: 98, stage: 1 },
-  { id: 'pipeline', block: 'gitlab', label: 'Pipeline status', x: 336, y: 98, stage: 2 },
-  { id: 'confluence', block: 'confluence', label: 'Release page', x: 500, y: 38, stage: 3 },
-  { id: 'jira', block: 'jira', label: 'Update tickets', x: 500, y: 158, stage: 3 },
-  { id: 'email', block: 'email', label: 'Prepare email', x: 664, y: 98, stage: 4 },
+  { id: 'tag', block: 'shell', label: 'Create tag', x: 8, y: 98, stage: 0 },
+  { id: 'push', block: 'shell', label: 'Push tag', x: 172, y: 98, stage: 1 },
+  { id: 'pipeline', block: 'http', label: 'Check CI', x: 336, y: 98, stage: 2 },
+  { id: 'notes', block: 'script', label: 'Release notes', x: 500, y: 38, stage: 3 },
+  { id: 'tickets', block: 'http', label: 'Update tickets', x: 500, y: 158, stage: 3 },
+  { id: 'approve', block: 'approval', label: 'Approve release', x: 664, y: 98, stage: 4 },
 ]
 
 const edges: [string, string][] = [
   ['tag', 'push'],
   ['push', 'pipeline'],
-  ['pipeline', 'confluence'],
-  ['pipeline', 'jira'],
-  ['confluence', 'email'],
-  ['jira', 'email'],
+  ['pipeline', 'notes'],
+  ['pipeline', 'tickets'],
+  ['notes', 'approve'],
+  ['tickets', 'approve'],
 ]
 
 const byId = Object.fromEntries(steps.map((s) => [s.id, s]))
@@ -65,7 +65,7 @@ export function FlowPreview() {
       viewBox="0 0 800 240"
       className="w-full max-w-3xl"
       role="img"
-      aria-label="Example workflow: create tag, push to GitLab, check pipeline status, then update the release page and Jira tickets in parallel, then prepare an email."
+      aria-label="Example workflow: create tag, push it, check CI, then write release notes and update tickets in parallel, then wait for approval."
     >
       {edges.map(([a, b]) => {
         const from = byId[a]
