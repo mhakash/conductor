@@ -10,6 +10,8 @@ import {
 } from '@xyflow/react'
 import type { DragEvent } from 'react'
 
+import { RevealNode } from '@/components/flow/RevealNode'
+
 import { edgeId, wouldCreateCycle } from './graph'
 import type { LibraryItem } from './library'
 import { LIBRARY_DRAG_TYPE } from './Palette'
@@ -25,6 +27,10 @@ export function Canvas({ items }: { items: Map<string, LibraryItem> }) {
   const onEdgesChange = useEditor((s) => s.onEdgesChange)
   const connect = useEditor((s) => s.connect)
   const addStep = useEditor((s) => s.addStep)
+  const selectedId = useEditor((s) => {
+    const selected = s.nodes.filter((n) => n.selected)
+    return selected.length === 1 ? selected[0].id : undefined
+  })
   const { screenToFlowPosition } = useReactFlow()
 
   const isValidConnection: IsValidConnection = (c: Connection | Edge) => {
@@ -72,6 +78,7 @@ export function Canvas({ items }: { items: Map<string, LibraryItem> }) {
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} />
         <Controls showInteractive={false} position="bottom-left" />
+        <RevealNode id={selectedId} />
       </ReactFlow>
 
       {nodes.length === 0 && (

@@ -15,6 +15,7 @@ import {
 import { motion, useReducedMotion } from 'motion/react'
 import { memo, useMemo } from 'react'
 
+import { RevealNode } from '@/components/flow/RevealNode'
 import { StepCard, type StepTone } from '@/components/flow/StepCard'
 import { StepTraits } from '@/components/flow/StepTraits'
 import type { Step } from '@/features/workflows/api'
@@ -205,6 +206,7 @@ export function RunGraph({ run, selectedId, onSelect }: RunGraphProps) {
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} />
       <Controls showInteractive={false} position="bottom-left" />
+      <RevealNode id={selectedId} />
     </ReactFlow>
   )
 }

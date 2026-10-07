@@ -32,11 +32,18 @@ export function RunPanel({ runId, onClose }: { runId: string; onClose: () => voi
     reserve: 120,
   })
 
-  // The step picked in the panel wins until the canvas selection changes.
+  // Picking a step here selects it on the canvas. A step no longer on the
+  // canvas is picked here only, until the canvas selection changes.
   const selected = useEditor(useShallow((s) => s.nodes.filter((n) => n.selected).map((n) => n.id)))
   const canvasPick = selected.length === 1 ? selected[0] : undefined
   const [pick, setPick] = useState<{ step: string; canvas: string | undefined }>()
   const picked = pick && pick.canvas === canvasPick ? pick.step : undefined
+  const pickStep = (id: string) => {
+    const { nodes, onNodesChange } = useEditor.getState()
+    if (!nodes.some((n) => n.id === id)) return setPick({ step: id, canvas: canvasPick })
+    setPick(undefined)
+    onNodesChange(nodes.map((n) => ({ type: 'select', id: n.id, selected: n.id === id })))
+  }
 
   const auto = run && defaultStep(run)
   const stepId =
@@ -88,7 +95,7 @@ export function RunPanel({ runId, onClose }: { runId: string; onClose: () => voi
             <li key={s.stepId}>
               <button
                 aria-current={s.stepId === stepId ? 'true' : undefined}
-                onClick={() => setPick({ step: s.stepId, canvas: canvasPick })}
+                onClick={() => pickStep(s.stepId)}
                 className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-hover/60 aria-[current=true]:bg-hover"
               >
                 <StatusIcon status={s.status} className="size-3.5" />
