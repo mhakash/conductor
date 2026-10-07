@@ -3,12 +3,14 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { useShallow } from 'zustand/react/shallow'
 
+import { ResizeHandle } from '@/components/ui/ResizeHandle'
 import { isActive, useRun, useRunLogs, type Run } from '@/features/runs/api'
 import { LogView } from '@/features/runs/LogView'
 import { StatusBadge, StatusIcon } from '@/features/runs/StatusIcon'
 import { useRunStream } from '@/features/runs/stream'
 import { cn } from '@/lib/cn'
 import { elapsed, formatDuration } from '@/lib/time'
+import { useBottomPanelHeight } from '@/lib/useBottomPanelHeight'
 import { useNow } from '@/lib/useNow'
 
 import { useEditor } from './store'
@@ -23,6 +25,12 @@ export function RunPanel({ runId, onClose }: { runId: string; onClose: () => voi
   useRunStream(runId, active)
   const logs = useRunLogs(runId).data ?? []
   const now = useNow(active)
+  const { height, handleProps } = useBottomPanelHeight({
+    storageKey: 'conductor.testRunPanel',
+    initial: 256,
+    min: 120,
+    reserve: 120,
+  })
 
   // The step picked in the panel wins until the canvas selection changes.
   const selected = useEditor(useShallow((s) => s.nodes.filter((n) => n.selected).map((n) => n.id)))
@@ -45,8 +53,10 @@ export function RunPanel({ runId, onClose }: { runId: string; onClose: () => voi
   return (
     <section
       aria-label="Test run"
-      className="@container flex h-64 shrink-0 animate-fade-in flex-col border-t border-line bg-surface"
+      style={{ height }}
+      className="@container relative flex max-h-[calc(100%-120px)] shrink-0 animate-fade-in flex-col border-t border-line bg-surface"
     >
+      <ResizeHandle {...handleProps} />
       <div className="flex h-10 shrink-0 items-center gap-2.5 border-b border-line px-3">
         <span className="text-[11px] font-medium tracking-wide text-fg-subtle uppercase">
           Test run

@@ -12,12 +12,14 @@ import { Link, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/Button'
+import { ResizeHandle } from '@/components/ui/ResizeHandle'
 import { Textarea } from '@/components/ui/Input'
 import { CALL_BLOCK } from '@/features/blocks/api'
 import type { Step } from '@/features/workflows/api'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { elapsed, formatDuration, timeAgo } from '@/lib/time'
+import { useBottomPanelHeight } from '@/lib/useBottomPanelHeight'
 import { useNow } from '@/lib/useNow'
 
 import {
@@ -97,6 +99,12 @@ function RunView({ run }: { run: Run }) {
   const selected = selectedId ? stepRuns.get(selectedId) : undefined
 
   const took = elapsed(run.startedAt, run.finishedAt, now)
+  const { height, handleProps } = useBottomPanelHeight({
+    storageKey: 'conductor.runDetailPanel',
+    initial: 400,
+    min: 160,
+    reserve: 300,
+  })
 
   return (
     <div className="flex h-full flex-col">
@@ -124,14 +132,12 @@ function RunView({ run }: { run: Run }) {
         </div>
       )}
 
-      <section
-        aria-label="Run graph"
-        className="relative h-[40%] min-h-56 shrink-0 border-b border-line"
-      >
+      <section aria-label="Run graph" className="relative min-h-56 flex-1 border-b border-line">
         <RunGraph run={shown} selectedId={selectedId} onSelect={select} />
       </section>
 
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <div style={{ height }} className="relative flex min-h-40 flex-col md:flex-row">
+        <ResizeHandle {...handleProps} />
         <nav
           aria-label="Steps"
           className="max-h-60 shrink-0 overflow-y-auto border-b border-line bg-surface p-2 md:max-h-none md:w-72 md:border-r md:border-b-0"
