@@ -34,7 +34,7 @@ React 19 + TS in `web/src`, Vite on :5180 proxying `/api` to :7070. Router:
 - `components/flow`: `StepCard` + `StepTraits`, the step visual shared by
   editor and run graph.
 - `components/layout`: `AppShell`, `Sidebar`, `PageHeader`.
-- `components/ui`: `Button`, `Input`, `Menu`, `Tooltip`, `ConfirmDialog` (Radix).
+- `components/ui`: `Button`, `Input`, `Select`, `Menu`, `Tooltip`, `ConfirmDialog` (Radix).
 - `styles/index.css`: Tailwind v4 `@theme` tokens; React Flow dark overrides.
 - `lib/`: `api.ts`, `cn.ts`, `time.ts`, `useNow.ts`.
 

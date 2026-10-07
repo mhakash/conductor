@@ -1,7 +1,8 @@
 import { Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/Button'
-import { Input, Select, Textarea } from '@/components/ui/Input'
+import { Input, Textarea } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
 import type { InputType, WorkflowInput } from '@/features/workflows/api'
 
 const inputTypes: { value: InputType; label: string }[] = [
@@ -59,21 +60,16 @@ export function InputDefsEditor({
               aria-label="Type"
               value={input.type}
               className="w-28 shrink-0"
-              onChange={(e) => {
-                const type = e.target.value as InputType
+              onValueChange={(v) => {
+                const type = v as InputType
                 update(i, {
                   type,
                   default: undefined,
                   options: type === 'select' ? (input.options ?? []) : undefined,
                 })
               }}
-            >
-              {inputTypes.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </Select>
+              options={inputTypes}
+            />
             <button
               aria-label={`Remove ${noun} ${input.name}`}
               onClick={() => onChange(value.filter((_, j) => j !== i))}
@@ -139,11 +135,12 @@ function DefaultValue({
       <Select
         aria-label="Default"
         value={input.default === true ? 'true' : 'false'}
-        onChange={(e) => onChange(e.target.value === 'true')}
-      >
-        <option value="false">Default: no</option>
-        <option value="true">Default: yes</option>
-      </Select>
+        onValueChange={(v) => onChange(v === 'true')}
+        options={[
+          { value: 'false', label: 'Default: no' },
+          { value: 'true', label: 'Default: yes' },
+        ]}
+      />
     )
   }
   if (input.type === 'select') {
@@ -151,15 +148,15 @@ function DefaultValue({
       <Select
         aria-label="Default"
         value={input.default === undefined ? '' : String(input.default)}
-        onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
-      >
-        <option value="">No default</option>
-        {(input.options ?? []).filter(Boolean).map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </Select>
+        onValueChange={(v) => onChange(v === '' ? undefined : v)}
+        options={[
+          { value: '', label: 'No default' },
+          ...[...new Set((input.options ?? []).filter(Boolean))].map((o) => ({
+            value: o,
+            label: o,
+          })),
+        ]}
+      />
     )
   }
   const number = input.type === 'number' && !exprDefaults

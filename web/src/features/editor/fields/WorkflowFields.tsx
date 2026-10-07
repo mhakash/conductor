@@ -1,7 +1,7 @@
 import { ArrowUpRight, X } from 'lucide-react'
 import { Link } from 'react-router'
 
-import { Select } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
 import { useWorkflowMap } from '@/features/workflows/api'
 
 import { useEditor } from '../store'
@@ -27,20 +27,15 @@ export function WorkflowField({
         id={id}
         value={value}
         aria-invalid={deleted}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        <option value="" disabled>
-          Choose a workflow
-        </option>
-        {deleted && <option value={value}>A deleted workflow</option>}
-        {[...workflows.values()]
-          .filter((w) => w.id !== current)
-          .map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.name}
-            </option>
-          ))}
-      </Select>
+        onValueChange={onChange}
+        placeholder="Choose a workflow"
+        options={[
+          ...(deleted ? [{ value, label: 'A deleted workflow' }] : []),
+          ...[...workflows.values()]
+            .filter((w) => w.id !== current)
+            .map((w) => ({ value: w.id, label: w.name })),
+        ]}
+      />
       {value && !deleted && (
         <Link
           to={`/workflows/${value}`}

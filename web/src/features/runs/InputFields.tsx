@@ -1,4 +1,5 @@
-import { FormField, Input, Select, Textarea } from '@/components/ui/Input'
+import { FormField, Input, Textarea } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
 import type { WorkflowInput } from '@/features/workflows/api'
 import { cn } from '@/lib/cn'
 
@@ -57,16 +58,16 @@ export function InputFields({
         help={i.description}
       >
         {i.type === 'select' ? (
-          <Select id={id} value={value} onChange={(e) => onChange(i.name, e.target.value)}>
-            <option value="" disabled={i.required}>
-              {i.required ? 'Choose…' : '—'}
-            </option>
-            {(i.options ?? []).map((o) => (
-              <option key={o} value={o}>
-                {o}
-              </option>
-            ))}
-          </Select>
+          <Select
+            id={id}
+            value={value}
+            onValueChange={(v) => onChange(i.name, v)}
+            placeholder="Choose…"
+            options={[
+              ...(i.required ? [] : [{ value: '', label: '—' }]),
+              ...(i.options ?? []).map((o) => ({ value: o, label: o })),
+            ]}
+          />
         ) : i.type === 'longtext' ? (
           <Textarea
             id={id}

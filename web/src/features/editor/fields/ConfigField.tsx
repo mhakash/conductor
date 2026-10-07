@@ -1,4 +1,5 @@
-import { FormField, Input, Select, Textarea } from '@/components/ui/Input'
+import { FormField, Input, Textarea } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
 import type { Field } from '@/features/blocks/api'
 import { cn } from '@/lib/cn'
 
@@ -96,13 +97,12 @@ export function ConfigField({ field, value, onChange, config }: ConfigFieldProps
             )
           case 'select':
             return (
-              <Select id={id} value={str(value)} onChange={(e) => onChange(e.target.value)}>
-                {field.options?.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </Select>
+              <Select
+                id={id}
+                value={str(value)}
+                onValueChange={onChange}
+                options={field.options ?? []}
+              />
             )
           case 'keyvalue':
             return (

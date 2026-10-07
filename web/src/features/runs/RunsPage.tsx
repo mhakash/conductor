@@ -5,7 +5,7 @@ import { Link, useSearchParams } from 'react-router'
 
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
-import { Select } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
 import { useWorkflows } from '@/features/workflows/api'
 import { cn } from '@/lib/cn'
 import { elapsed, formatDuration, timeAgo } from '@/lib/time'
@@ -143,28 +143,22 @@ function Filters({ workflowId, scratch, status, onWorkflow, onScratch, onStatus 
         aria-label="Workflow"
         className="w-auto max-w-64"
         value={workflowId ?? ''}
-        onChange={(e) => onWorkflow(e.target.value || undefined)}
-      >
-        <option value="">All workflows</option>
-        {workflows.data?.map((w) => (
-          <option key={w.id} value={w.id}>
-            {w.name}
-          </option>
-        ))}
-      </Select>
+        onValueChange={(v) => onWorkflow(v || undefined)}
+        options={[
+          { value: '', label: 'All workflows' },
+          ...(workflows.data ?? []).map((w) => ({ value: w.id, label: w.name })),
+        ]}
+      />
       <Select
         aria-label="Status"
         className="w-auto"
         value={status ?? ''}
-        onChange={(e) => onStatus(e.target.value || undefined)}
-      >
-        <option value="">Any status</option>
-        {STATUSES.map((s) => (
-          <option key={s} value={s}>
-            {statusLabel(s)}
-          </option>
-        ))}
-      </Select>
+        onValueChange={(v) => onStatus(v || undefined)}
+        options={[
+          { value: '', label: 'Any status' },
+          ...STATUSES.map((s) => ({ value: s, label: statusLabel(s) })),
+        ]}
+      />
       <Button
         variant="secondary"
         aria-pressed={scratch}

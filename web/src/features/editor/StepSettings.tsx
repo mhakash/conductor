@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 
-import { FormField, Input, Select } from '@/components/ui/Input'
+import { FormField, Input } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
 import type { StepSettings as Settings } from '@/features/workflows/api'
 
 import { CodeField } from './fields/CodeField'
@@ -130,15 +131,14 @@ export function StepSettings({
                 <Select
                   id="step-retry-backoff"
                   value={retry.backoff ?? 'fixed'}
-                  onChange={(e) =>
-                    onChange({
-                      retry: { ...retry, backoff: e.target.value as 'fixed' | 'exponential' },
-                    })
+                  onValueChange={(v) =>
+                    onChange({ retry: { ...retry, backoff: v as 'fixed' | 'exponential' } })
                   }
-                >
-                  <option value="fixed">Same wait each time</option>
-                  <option value="exponential">Double it each time</option>
-                </Select>
+                  options={[
+                    { value: 'fixed', label: 'Same wait each time' },
+                    { value: 'exponential', label: 'Double it each time' },
+                  ]}
+                />
               </FormField>
             </div>
           )}
