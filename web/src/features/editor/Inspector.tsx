@@ -3,21 +3,22 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
 import { Button } from '@/components/ui/Button'
-import { FormField, Input, Select, Textarea } from '@/components/ui/Input'
+import { FormField, Input, Textarea } from '@/components/ui/Input'
 import { BlockIcon } from '@/features/blocks/BlockIcon'
-import { CALL_BLOCK, type Block, type CallConfig } from '@/features/blocks/api'
+import {
+  CALL_BLOCK,
+  INPUT_BLOCK,
+  type Block,
+  type CallConfig,
+  type FormConfig,
+} from '@/features/blocks/api'
 import { PresetDialog } from '@/features/presets/PresetDialog'
 import { useSecrets } from '@/features/secrets/api'
-import {
-  useWorkflowMap,
-  type InputType,
-  type WorkflowInput,
-  type WorkflowOutput,
-  type WorkflowSummary,
-} from '@/features/workflows/api'
+import { useWorkflowMap, type WorkflowOutput, type WorkflowSummary } from '@/features/workflows/api'
 
 import { CodeField } from './fields/CodeField'
 import { ConfigField } from './fields/ConfigField'
+import { InputDefsEditor } from './fields/InputDefsEditor'
 import { ExpressionScope, type ExpressionOption } from './fields/expressions'
 import { ancestorsOf, cleanSettings, type StepData, type StepNode } from './graph'
 import { StepSettings } from './StepSettings'
@@ -363,12 +364,21 @@ const itemScope: ExpressionOption[] = [
 
 type DeclaredOutput = { key: string; description: string }
 
-/** A step's outputs: its block's, or for a step that runs a workflow, that workflow's. */
+/**
+ * A step's outputs: its block's, for a step that runs a workflow that
+ * workflow's, and for an input step its fields.
+ */
 function declaredOutputs(
   data: StepData,
   block: Block,
   workflows: Map<string, WorkflowSummary>,
 ): DeclaredOutput[] {
+  if (data.block === INPUT_BLOCK) {
+    return ((data.config as FormConfig).fields ?? []).map((f) => ({
+      key: f.name,
+      description: f.label || `${f.type} field`,
+    }))
+  }
   if (data.block !== CALL_BLOCK) return block.outputs
   const target = workflows.get((data.config as CallConfig).workflow ?? '')
   if (!target) return []
@@ -405,12 +415,6 @@ function outputsOf(id: string, declared: DeclaredOutput[], loops: boolean): Expr
   ]
 }
 
-const inputTypes: { value: InputType; label: string }[] = [
-  { value: 'text', label: 'Text' },
-  { value: 'number', label: 'Number' },
-  { value: 'boolean', label: 'Yes / no' },
-]
-
 function InputsEditor() {
   const inputs = useEditor((s) => s.inputs)
   const setInputs = useEditor((s) => s.setInputs)
@@ -418,95 +422,13 @@ function InputsEditor() {
     useShallow((s) => s.problems.filter((p) => p.message.startsWith('input'))),
   )
 
-  const update = (i: number, patch: Partial<WorkflowInput>) =>
-    setInputs(inputs.map((input, j) => (j === i ? { ...input, ...patch } : input)))
-
-  const add = () => {
-    const taken = new Set(inputs.map((i) => i.name))
-    let name = 'version'
-    for (let n = 2; taken.has(name); n++) name = `input${n}`
-    setInputs([...inputs, { name, type: 'text', required: false }])
-  }
-
   return (
     <Section title="Inputs">
       <p className="-mt-2 text-xs text-fg-subtle">
         Asked for when the workflow runs. Steps read them as{' '}
         <code className="font-mono">inputs.name</code>.
       </p>
-      {inputs.map((input, i) => (
-        <div
-          key={i}
-          className="flex flex-col gap-2 rounded-lg border border-line bg-canvas/50 p-2.5"
-        >
-          <div className="flex gap-1.5">
-            <Input
-              aria-label="Input name"
-              value={input.name}
-              spellCheck={false}
-              className="font-mono text-xs"
-              onChange={(e) => update(i, { name: e.target.value })}
-            />
-            <Select
-              aria-label="Type"
-              value={input.type}
-              className="w-28 shrink-0"
-              onChange={(e) => update(i, { type: e.target.value as InputType, default: undefined })}
-            >
-              {inputTypes.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </Select>
-            <button
-              aria-label={`Remove input ${input.name}`}
-              onClick={() => setInputs(inputs.filter((_, j) => j !== i))}
-              className="flex size-8 shrink-0 items-center justify-center rounded-md text-fg-subtle hover:bg-hover hover:text-fg"
-            >
-              <X className="size-3.5" />
-            </button>
-          </div>
-          <div className="flex items-center gap-1.5">
-            {input.type === 'boolean' ? (
-              <Select
-                aria-label="Default"
-                value={input.default === true ? 'true' : 'false'}
-                onChange={(e) => update(i, { default: e.target.value === 'true' })}
-              >
-                <option value="false">Default: no</option>
-                <option value="true">Default: yes</option>
-              </Select>
-            ) : (
-              <Input
-                aria-label="Default value"
-                placeholder="Default (optional)"
-                type={input.type === 'number' ? 'number' : 'text'}
-                value={input.default === undefined ? '' : String(input.default)}
-                onChange={(e) =>
-                  update(i, {
-                    default:
-                      e.target.value === ''
-                        ? undefined
-                        : input.type === 'number'
-                          ? e.target.valueAsNumber
-                          : e.target.value,
-                  })
-                }
-              />
-            )}
-            <label className="flex shrink-0 items-center gap-1.5 px-1 text-xs text-fg-muted">
-              <input
-                type="checkbox"
-                checked={!!input.required}
-                onChange={(e) => update(i, { required: e.target.checked })}
-                className="accent-brass"
-              />
-              Required
-            </label>
-          </div>
-        </div>
-      ))}
+      <InputDefsEditor value={inputs} onChange={setInputs} noun="input" firstName="version" />
       {problems.length > 0 && (
         <ul className="flex flex-col gap-1 text-xs text-coral">
           {problems.map((p) => (
@@ -514,9 +436,6 @@ function InputsEditor() {
           ))}
         </ul>
       )}
-      <Button variant="ghost" className="w-fit" onClick={add}>
-        <Plus className="size-3.5" /> Add input
-      </Button>
     </Section>
   )
 }

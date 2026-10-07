@@ -8,14 +8,13 @@ import {
   Square,
   Workflow as WorkflowIcon,
 } from 'lucide-react'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/Button'
 import { ResizeHandle } from '@/components/ui/ResizeHandle'
-import { Textarea } from '@/components/ui/Input'
-import { CALL_BLOCK } from '@/features/blocks/api'
+import { CALL_BLOCK, INPUT_BLOCK } from '@/features/blocks/api'
 import type { Step } from '@/features/workflows/api'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -27,7 +26,6 @@ import {
   isActive,
   statusLabel,
   useCancelRun,
-  useDecide,
   useRun,
   useRunLogs,
   type LogLine,
@@ -42,6 +40,7 @@ import { executionOrder } from './order'
 import { StatusBadge, StatusIcon } from './StatusIcon'
 import { stepSummary, withChildWaits } from './summary'
 import { useRunWorkflow } from './useRunWorkflow'
+import { WaitingCard } from './WaitingCard'
 
 export function RunPage() {
   const { id = '' } = useParams()
@@ -127,7 +126,7 @@ function RunView({ run }: { run: Run }) {
           <Hand className="size-4 shrink-0 text-brass" strokeWidth={1.75} />
           <p className="min-w-0 flex-1 truncate text-fg">
             <span className="font-medium">{defs.get(waiting.stepId)?.name || waiting.stepId}</span>{' '}
-            <span className="text-fg-muted">is waiting for your approval.</span>
+            <span className="text-fg-muted">{waitingFor(defs.get(waiting.stepId)?.block)}</span>
           </p>
           <Button variant="secondary" onClick={() => select(waiting.stepId)}>
             Review
@@ -377,14 +376,7 @@ function StepDetail({ step, name, block, def, runId, lines, subRuns, now }: Step
         </span>
       </div>
 
-      {step.status === 'waiting' && block !== CALL_BLOCK && (
-        <ApprovalCard
-          runId={runId}
-          stepId={step.stepId}
-          message={(configs[0]?.message as string | undefined) ?? ''}
-          since={step.startedAt}
-        />
-      )}
+      <WaitingCard runId={runId} step={step} block={block} />
 
       {step.error && (
         <p
@@ -414,7 +406,7 @@ function StepDetail({ step, name, block, def, runId, lines, subRuns, now }: Step
         <LogView lines={lines} follow={step.status === 'running'} empty={empty} />
       </Panel>
 
-      {configs.length === 1 && Object.keys(configs[0]).length > 0 && (
+      {configs.length === 1 && Object.keys(configs[0]).length > 0 && block !== INPUT_BLOCK && (
         <Panel title={step.status === 'waiting' ? 'Waiting with' : 'Ran with'}>
           <KeyValues entries={Object.entries(configs[0])} />
         </Panel>
@@ -481,64 +473,10 @@ function ChildRuns({ runs, now }: { runs: RunSummary[]; now: number }) {
   )
 }
 
-function ApprovalCard({
-  runId,
-  stepId,
-  message,
-  since,
-}: {
-  runId: string
-  stepId: string
-  message: string
-  since: string | null
-}) {
-  const [comment, setComment] = useState('')
-  const decide = useDecide(runId)
-
-  const submit = (approve: boolean) =>
-    decide.mutate(
-      { stepId, approve, comment: comment.trim() },
-      {
-        onSuccess: () => toast(approve ? 'Approved' : 'Rejected'),
-        onError: (err) => toast.error(`Couldn't send your decision: ${err.message}`),
-      },
-    )
-
-  return (
-    <section
-      aria-label="Approval"
-      className="flex animate-pop-in flex-col gap-3 rounded-xl border border-brass/40 bg-brass/5 p-4"
-    >
-      <p className="flex items-center gap-2 text-[11px] font-medium tracking-wide text-brass uppercase">
-        <Hand className="size-3.5" strokeWidth={2} />
-        Waiting for your approval
-        {since && (
-          <span className="font-normal tracking-normal text-fg-subtle normal-case">
-            · since {timeAgo(since)}
-          </span>
-        )}
-      </p>
-      <p className="text-[15px] whitespace-pre-wrap text-fg">
-        {message || 'Approve to let the run continue.'}
-      </p>
-      <Textarea
-        aria-label="Comment"
-        placeholder="Comment (optional) — later steps can read it"
-        value={comment}
-        rows={2}
-        onChange={(e) => setComment(e.target.value)}
-      />
-      <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => submit(true)} disabled={decide.isPending}>
-          Approve
-        </Button>
-        <Button variant="danger" onClick={() => submit(false)} disabled={decide.isPending}>
-          Reject
-        </Button>
-        <span className="text-xs text-fg-subtle">Rejecting fails this step.</span>
-      </div>
-    </section>
-  )
+function waitingFor(block: string | undefined) {
+  if (block === INPUT_BLOCK) return 'is waiting for your input.'
+  if (block === CALL_BLOCK) return 'is waiting for you.'
+  return 'is waiting for your approval.'
 }
 
 function KeyValues({ entries }: { entries: [string, unknown][] }) {

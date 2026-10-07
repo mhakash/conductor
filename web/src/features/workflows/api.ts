@@ -41,13 +41,15 @@ export type StepSettings = {
 
 export type Edge = { from: string; to: string }
 
-export type InputType = 'text' | 'number' | 'boolean'
+export type InputType = 'text' | 'longtext' | 'number' | 'boolean' | 'select'
 
 /** A value asked for when a run starts; read in expressions as inputs.<name>. */
 export type WorkflowInput = {
   name: string
   label?: string
   type: InputType
+  /** The choices of a select input. */
+  options?: string[]
   default?: string | number | boolean
   required?: boolean
   description?: string

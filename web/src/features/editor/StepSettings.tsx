@@ -5,7 +5,8 @@ import type { StepSettings as Settings } from '@/features/workflows/api'
 
 import { CodeField } from './fields/CodeField'
 
-const APPROVAL = 'approval'
+// Blocks that wait for someone rather than do work.
+const WAITING_BLOCKS = new Set(['approval', 'input'])
 
 /**
  * How a step runs, whatever its block: condition, loop, retries, failure
@@ -23,7 +24,7 @@ export function StepSettings({
   settings: Settings
   onChange: (patch: Partial<Settings>) => void
 }) {
-  const approval = block === APPROVAL
+  const waits = WAITING_BLOCKS.has(block)
   const retry = settings.retry
   const loop = settings.forEach
 
@@ -43,7 +44,7 @@ export function StepSettings({
         />
       </FormField>
 
-      {!approval && (
+      {!waits && (
         <Toggle
           id="step-foreach"
           label="Run once per item in a list"
@@ -93,7 +94,7 @@ export function StepSettings({
         </Toggle>
       )}
 
-      {!approval && (
+      {!waits && (
         <div className="flex flex-col gap-3">
           <FormField
             label="Retries"
@@ -161,15 +162,15 @@ export function StepSettings({
         label="Timeout"
         htmlFor="step-timeout"
         help={
-          approval
-            ? 'How long to wait for a decision, e.g. 4h. Without one, it waits until someone decides.'
+          waits
+            ? 'How long to wait for an answer, e.g. 4h. Without one, it waits until someone answers.'
             : 'How long the step may run, e.g. 30s, 10m or 2h. Defaults to 1h.'
         }
       >
         <Input
           id="step-timeout"
           value={settings.timeout ?? ''}
-          placeholder={approval ? 'No limit' : '1h'}
+          placeholder={waits ? 'No limit' : '1h'}
           className="font-mono text-xs"
           spellCheck={false}
           onChange={(e) => onChange({ timeout: e.target.value })}

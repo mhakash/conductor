@@ -374,3 +374,82 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+func inputFlow() workflow.Workflow {
+	return build([]stepSpec{
+		{id: "tag", block: "emit", config: `{"value":"v1.4.0"}`},
+		{id: "ask", block: "input", config: `{"message":"Where to?","fields":[
+			{"name":"env","type":"select","options":["staging","prod"],"required":true},
+			{"name":"replicas","type":"number","default":"{{ len(steps.tag.outputs.value) }}"},
+			{"name":"notes","type":"longtext"}]}`},
+		{id: "push", block: "emit", config: `{"value":"{{ steps.tag.outputs.value }} to {{ steps.ask.outputs.env }} x{{ steps.ask.outputs.replicas }}"}`},
+	}, "tag>ask", "ask>push")
+}
+
+func TestInputStep(t *testing.T) {
+	f := newFixture(t, 8)
+	r, err := f.engine.Start(context.Background(), inputFlow(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiting := waitForApproval(t, f, r.ID)
+	if st := step(waiting, "ask"); !strings.Contains(string(st.Config), `"default":"6"`) {
+		t.Errorf("ask config = %s, want the default rendered", st.Config)
+	}
+
+	if err := f.engine.Decide(r.ID, "ask", Decision{Approve: true}); !errors.Is(err, ErrNotWaiting) {
+		t.Errorf("deciding an input step: %v", err)
+	}
+	var verr *workflow.ValidationError
+	if err := f.engine.Respond(r.ID, "ask", map[string]any{"env": "dev"}); !errors.As(err, &verr) {
+		t.Fatalf("an option that doesn't exist: %v", err)
+	}
+	if err := f.engine.Respond(r.ID, "ask", map[string]any{"env": "prod"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.engine.Respond(r.ID, "ask", map[string]any{"env": "prod"}); !errors.Is(err, ErrNotWaiting) {
+		t.Errorf("a second response: %v", err)
+	}
+
+	got := f.waitDone(t, r.ID)
+	if got.Status != run.StatusSucceeded {
+		t.Errorf("run = %s", got.Status)
+	}
+	if out := string(step(got, "ask").Outputs); out != `{"env":"prod","notes":"","replicas":6}` {
+		t.Errorf("ask outputs = %s", out)
+	}
+	if out := string(step(got, "push").Outputs); out != `{"value":"v1.4.0 to prod x6"}` {
+		t.Errorf("push outputs = %s", out)
+	}
+}
+
+func TestInputStepSurvivesRestart(t *testing.T) {
+	f := newFixture(t, 8)
+	r, err := f.engine.Start(context.Background(), inputFlow(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForApproval(t, f, r.ID)
+	if err := f.engine.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := f.newEngine(t, 8)
+	if err := restarted.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := restarted.Respond(r.ID, "ask", map[string]any{"env": "staging", "replicas": "2"})
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Respond: %v", err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if out := string(step(f.waitDone(t, r.ID), "push").Outputs); out != `{"value":"v1.4.0 to staging x2"}` {
+		t.Errorf("push outputs = %s", out)
+	}
+}

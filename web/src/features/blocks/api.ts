@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
 
+import type { WorkflowInput } from '@/features/workflows/api'
 import { api } from '@/lib/api'
 
 export type FieldType =
@@ -15,12 +16,20 @@ export type FieldType =
   | 'workflow'
   /** Values for the inputs of the workflow chosen in the block's `workflow` field. */
   | 'inputs'
+  /** Fields to ask for, defined like workflow inputs (input block). */
+  | 'form'
 
 /** The block of a step that runs another workflow (ADR 0007). */
 export const CALL_BLOCK = 'workflow'
 
 /** Config of a CALL_BLOCK step. */
 export type CallConfig = { workflow?: string; inputs?: Record<string, string> }
+
+/** The block of a step that waits for someone to fill in a form (ADR 0006). */
+export const INPUT_BLOCK = 'input'
+
+/** Config of an INPUT_BLOCK step. */
+export type FormConfig = { message?: string; fields?: WorkflowInput[] }
 
 export type Field = {
   key: string

@@ -9,6 +9,7 @@ import (
 
 	"conductor/internal/engine"
 	"conductor/internal/run"
+	"conductor/internal/workflow"
 )
 
 func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
@@ -123,14 +124,35 @@ func (s *Server) handleDecision(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// handleResponse gives values to an input step that is waiting.
+func (s *Server) handleResponse(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Values map[string]any `json:"values"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if err := s.engine.Respond(chi.URLParam(r, "id"), chi.URLParam(r, "step"), body.Values); err != nil {
+		s.runError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
 func (s *Server) runError(w http.ResponseWriter, r *http.Request, err error) {
+	var verr *workflow.ValidationError
 	switch {
+	case errors.As(err, &verr):
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"error":    verr.Problems[0].Message,
+			"problems": verr.Problems,
+		})
 	case errors.Is(err, run.ErrNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, engine.ErrNotActive):
 		writeError(w, http.StatusConflict, "This run has already finished.")
 	case errors.Is(err, engine.ErrNotWaiting):
-		writeError(w, http.StatusConflict, "This step isn't waiting for approval; it may already have been decided.")
+		writeError(w, http.StatusConflict, "This step isn't waiting any more; it may already have been answered.")
 	default:
 		s.internalError(w, r, err)
 	}

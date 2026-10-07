@@ -34,6 +34,7 @@ type input struct {
 	Name        string             `yaml:"name"`
 	Label       string             `yaml:"label,omitempty"`
 	Type        workflow.InputType `yaml:"type"`
+	Options     []string           `yaml:"options,omitempty"`
 	Default     any                `yaml:"default,omitempty"`
 	Required    bool               `yaml:"required,omitempty"`
 	Description string             `yaml:"description,omitempty"`

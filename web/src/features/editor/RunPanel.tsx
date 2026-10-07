@@ -8,6 +8,7 @@ import { isActive, useRun, useRunLogs, type Run } from '@/features/runs/api'
 import { LogView } from '@/features/runs/LogView'
 import { StatusBadge, StatusIcon } from '@/features/runs/StatusIcon'
 import { useRunStream } from '@/features/runs/stream'
+import { WaitingCard } from '@/features/runs/WaitingCard'
 import { cn } from '@/lib/cn'
 import { elapsed, formatDuration } from '@/lib/time'
 import { useBottomPanelHeight } from '@/lib/useBottomPanelHeight'
@@ -53,6 +54,7 @@ export function RunPanel({ runId, onClose }: { runId: string; onClose: () => voi
     () => new Map((run?.definition.steps ?? []).map((s) => [s.id, s.name || s.id])),
     [run?.definition.steps],
   )
+  const block = run?.definition.steps.find((s) => s.id === stepId)?.block ?? ''
 
   if (!run) return null
   const took = elapsed(run.startedAt, run.finishedAt, now)
@@ -114,6 +116,11 @@ export function RunPanel({ runId, onClose }: { runId: string; onClose: () => voi
             >
               {step.error}
             </p>
+          )}
+          {step?.status === 'waiting' && (
+            <div className="max-h-[70%] shrink-0 overflow-y-auto border-b border-line p-3">
+              <WaitingCard runId={run.id} step={step} block={block} />
+            </div>
           )}
           <div className="min-h-0 flex-1 overflow-hidden [&_[role=log]]:h-full [&_[role=log]]:max-h-full">
             <LogView

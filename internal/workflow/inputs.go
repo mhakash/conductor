@@ -3,6 +3,7 @@ package workflow
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -13,14 +14,19 @@ const (
 	InputText    InputType = "text"
 	InputNumber  InputType = "number"
 	InputBoolean InputType = "boolean"
+	// InputLongText is text written over several lines.
+	InputLongText InputType = "longtext"
+	// InputSelect is one of Input.Options.
+	InputSelect InputType = "select"
 )
 
 // Input is a value asked for when a run starts, readable in expressions as
-// inputs.<name>.
+// inputs.<name>. Input steps ask for the same kind of values mid-run.
 type Input struct {
 	Name        string    `json:"name"`
 	Label       string    `json:"label,omitempty"`
 	Type        InputType `json:"type"`
+	Options     []string  `json:"options,omitempty"`
 	Default     any       `json:"default,omitempty"`
 	Required    bool      `json:"required,omitempty"`
 	Description string    `json:"description,omitempty"`
@@ -28,27 +34,52 @@ type Input struct {
 
 var inputNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
 
-func validateInputs(inputs []Input) []Problem {
+// validateInputs checks input definitions; noun names them in messages
+// ("input", or "field" for an input step's). With exprDefaults, a default
+// may be an expression, checked once it is rendered.
+func validateInputs(inputs []Input, noun string, exprDefaults bool) []Problem {
 	var problems []Problem
+	add := func(format string, args ...any) {
+		problems = append(problems, Problem{Message: noun + " " + fmt.Sprintf(format, args...)})
+	}
 	seen := map[string]bool{}
 	for _, in := range inputs {
 		switch {
 		case !inputNamePattern.MatchString(in.Name):
-			problems = append(problems, Problem{Message: fmt.Sprintf("input name %q must start with a letter and use only letters, digits and _", in.Name)})
+			add("name %q must start with a letter and use only letters, digits and _", in.Name)
 		case seen[in.Name]:
-			problems = append(problems, Problem{Message: fmt.Sprintf("input %q is defined more than once", in.Name)})
+			add("%q is defined more than once", in.Name)
 		}
 		seen[in.Name] = true
 
 		switch in.Type {
-		case InputText, InputNumber, InputBoolean:
-			if in.Default != nil {
-				if _, err := coerce(in.Type, in.Default); err != nil {
-					problems = append(problems, Problem{Message: fmt.Sprintf("input %q: default %v", in.Name, err)})
+		case InputText, InputNumber, InputBoolean, InputLongText, InputSelect:
+		default:
+			add("%q has unknown type %q", in.Name, in.Type)
+			continue
+		}
+		if in.Type == InputSelect {
+			if len(in.Options) == 0 {
+				add("%q needs at least one option", in.Name)
+			}
+			for i, o := range in.Options {
+				switch {
+				case strings.TrimSpace(o) == "":
+					add("%q has an empty option", in.Name)
+				case slices.Contains(in.Options[:i], o):
+					add("%q has option %q more than once", in.Name, o)
 				}
 			}
-		default:
-			problems = append(problems, Problem{Message: fmt.Sprintf("input %q has unknown type %q", in.Name, in.Type)})
+		} else if len(in.Options) > 0 {
+			add("%q: only select %ss have options", in.Name, noun)
+		}
+		if s, ok := in.Default.(string); ok && exprDefaults && strings.Contains(s, "{{") {
+			continue
+		}
+		if in.Default != nil {
+			if _, err := coerce(in, in.Default); err != nil {
+				add("%q: default %v", in.Name, err)
+			}
 		}
 	}
 	return problems
@@ -57,6 +88,15 @@ func validateInputs(inputs []Input) []Problem {
 // ResolveInputs applies defaults and type conversion to the values given
 // for a run. Every declared input appears in the result.
 func ResolveInputs(defs []Input, given map[string]any) (map[string]any, error) {
+	return resolve(defs, given, "input")
+}
+
+// ResolveFields does the same for the values given to an input step.
+func ResolveFields(defs []Input, given map[string]any) (map[string]any, error) {
+	return resolve(defs, given, "field")
+}
+
+func resolve(defs []Input, given map[string]any, noun string) (map[string]any, error) {
 	var problems []Problem
 	out := make(map[string]any, len(defs))
 	declared := map[string]bool{}
@@ -69,21 +109,25 @@ func ResolveInputs(defs []Input, given map[string]any) (map[string]any, error) {
 		}
 		if v == nil || v == "" {
 			if d.Required {
-				problems = append(problems, Problem{Message: fmt.Sprintf("input %q is required", d.Name)})
+				problems = append(problems, Problem{Message: fmt.Sprintf("%s %q is required", noun, d.Name)})
+				continue
+			}
+			if d.Type == InputSelect {
+				out[d.Name] = "" // nothing chosen
 				continue
 			}
 			v = zero(d.Type)
 		}
-		c, err := coerce(d.Type, v)
+		c, err := coerce(d, v)
 		if err != nil {
-			problems = append(problems, Problem{Message: fmt.Sprintf("input %q: %v", d.Name, err)})
+			problems = append(problems, Problem{Message: fmt.Sprintf("%s %q: %v", noun, d.Name, err)})
 			continue
 		}
 		out[d.Name] = c
 	}
 	for name := range given {
 		if !declared[name] {
-			problems = append(problems, Problem{Message: fmt.Sprintf("this workflow has no input called %q", name)})
+			problems = append(problems, Problem{Message: fmt.Sprintf("there's no %s called %q", noun, name)})
 		}
 	}
 	if len(problems) > 0 {
@@ -102,9 +146,15 @@ func zero(t InputType) any {
 	return ""
 }
 
-func coerce(t InputType, v any) (any, error) {
+func coerce(in Input, v any) (any, error) {
+	t := in.Type
 	switch t {
-	case InputText:
+	case InputSelect:
+		if s, ok := v.(string); ok && slices.Contains(in.Options, s) {
+			return s, nil
+		}
+		return nil, fmt.Errorf("%v is not one of the options", v)
+	case InputText, InputLongText:
 		switch v := v.(type) {
 		case string:
 			return v, nil

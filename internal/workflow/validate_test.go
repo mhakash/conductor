@@ -251,3 +251,49 @@ func TestRetryDelay(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateInputStepFields(t *testing.T) {
+	w := wf([]string{"tag", "ask"}, Edge{From: "tag", To: "ask"})
+	w.Definition.Steps[1].Block = InputBlock
+	w = withConfig(w, "ask", `{"fields":[
+		{"name":"env","type":"select","options":["staging","staging"],"default":"dev"},
+		{"name":"count","type":"number","default":"{{ steps.tag.outputs.n }}"},
+		{"name":"note","type":"text","options":["a"]},
+		{"name":"env","type":"date"}]}`)
+	err := Validate(w, blockSet(known))
+	if err == nil {
+		t.Fatal("no error")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		`field "env" has option "staging" more than once`,
+		`field "env": default dev is not one of the options`,
+		`field "note": only select fields have options`,
+		`field "env" is defined more than once`,
+		`field "env" has unknown type "date"`,
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q missing %q", msg, want)
+		}
+	}
+	if strings.Contains(msg, `"count"`) {
+		t.Errorf("an expression default was rejected: %q", msg)
+	}
+}
+
+func TestResolveFieldsSelect(t *testing.T) {
+	defs := []Input{
+		{Name: "env", Type: InputSelect, Options: []string{"staging", "prod"}},
+		{Name: "notes", Type: InputLongText},
+	}
+	got, err := ResolveFields(defs, map[string]any{"notes": "line 1\nline 2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["env"] != "" || got["notes"] != "line 1\nline 2" {
+		t.Errorf("resolved = %v", got)
+	}
+	if _, err := ResolveFields(defs, map[string]any{"env": "dev"}); err == nil || !strings.Contains(err.Error(), `field "env": dev is not one of the options`) {
+		t.Errorf("err = %v", err)
+	}
+}

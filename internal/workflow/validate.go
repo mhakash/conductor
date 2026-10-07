@@ -61,7 +61,7 @@ func Validate(w Workflow, blocks Blocks) error {
 	if def.SchemaVersion != SchemaVersion {
 		add(Problem{Message: fmt.Sprintf("unsupported schema version %d", def.SchemaVersion)})
 	}
-	problems = append(problems, validateInputs(def.Inputs)...)
+	problems = append(problems, validateInputs(def.Inputs, "input", false)...)
 
 	steps := make(map[string]bool, len(def.Steps))
 	for _, s := range def.Steps {
@@ -82,6 +82,9 @@ func Validate(w Workflow, blocks Blocks) error {
 			}
 		}
 		problems = append(problems, ValidateSettings(s)...)
+		if s.Block == InputBlock {
+			problems = append(problems, validateForm(s)...)
+		}
 	}
 
 	seen := make(map[Edge]bool, len(def.Edges))

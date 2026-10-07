@@ -36,7 +36,7 @@ describe('stepSummary', () => {
     expect(stepSummary(run({ status: 'succeeded', attempt: 3 }), def)).toBe(
       'succeeded on attempt 3 of 4',
     )
-    expect(stepSummary(run({ status: 'waiting' }), undefined)).toBe('Waiting for approval')
+    expect(stepSummary(run({ status: 'waiting' }), undefined)).toBe('Waiting for you')
   })
 })
 

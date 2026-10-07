@@ -90,7 +90,7 @@ name: Inputs example
 inputs:
   - name: version # letters, digits, _; starts with a letter
     label: Version to release # shown when starting a run
-    type: text # text | number | boolean
+    type: text # text | longtext | number | boolean | select
     default: "1.0.0"
     required: true
     description: Semantic version, without the v
@@ -100,12 +100,19 @@ inputs:
   - name: notify
     type: boolean
     default: false
+  - name: env
+    type: select
+    options: [staging, production] # select only; at least one
+    default: staging
+  - name: notes
+    type: longtext # text over several lines
 steps: []
 ```
 
 - Read in expressions as `inputs.<name>`. Only declared inputs may be used.
-- `default` must match the type. A `required` input with no default must be
-  given when the run starts.
+- `default` must match the type; a `select` default must be one of its
+  `options`. A `required` input with no default must be given when the run
+  starts. An optional `select` left blank is `""`.
 - Names are unique and match `^[a-zA-Z][a-zA-Z0-9_]{0,63}$`.
 
 ## Outputs
@@ -171,18 +178,18 @@ steps:
         SERVICE: "{{ item }}"
 ```
 
-| Key               | Meaning                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------ |
-| `id`              | Unique; lowercase letters, digits and `_`, starting with a letter.                   |
-| `name`            | Display name.                                                                        |
-| `block`           | What the step does. One of the [blocks](#blocks).                                    |
-| `needs`           | Ids of steps this one runs after. No cycles. Without `needs`, steps run in parallel. |
-| `if`              | Bare expression that must be `true` or `false`. False skips the step.                |
-| `forEach`         | Run once per list item: `items` (bare expression), `concurrency`.                    |
-| `retry`           | `max`, `delay`, `backoff`.                                                           |
-| `continueOnError` | `true` lets dependents run and the run succeed if this step fails.                   |
-| `timeout`         | Per attempt, e.g. `30s`, `5m`, `2h`. Default `1h`. For approvals: how long to wait.  |
-| `config`          | The block's fields, below. Omit fields you don't need.                               |
+| Key               | Meaning                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| `id`              | Unique; lowercase letters, digits and `_`, starting with a letter.                       |
+| `name`            | Display name.                                                                            |
+| `block`           | What the step does. One of the [blocks](#blocks).                                        |
+| `needs`           | Ids of steps this one runs after. No cycles. Without `needs`, steps run in parallel.     |
+| `if`              | Bare expression that must be `true` or `false`. False skips the step.                    |
+| `forEach`         | Run once per list item: `items` (bare expression), `concurrency`.                        |
+| `retry`           | `max`, `delay`, `backoff`.                                                               |
+| `continueOnError` | `true` lets dependents run and the run succeed if this step fails.                       |
+| `timeout`         | Per attempt, e.g. `30s`, `5m`, `2h`. Default `1h`. For approval/input: how long to wait. |
+| `config`          | The block's fields, below. Omit fields you don't need.                                   |
 
 When a step runs:
 
@@ -192,7 +199,7 @@ When a step runs:
   is enough, so a step that joins an `if` branch and its opposite still runs.
 - Otherwise its `if` is evaluated, then it runs.
 
-`approval` steps can't use `retry` or `forEach`.
+`approval` and `input` steps can't use `retry` or `forEach`.
 
 ## Expressions
 
@@ -378,6 +385,47 @@ Rejecting fails the step. Waiting survives restarts; `timeout` limits it.
 
 Outputs: `approved` (`true` or `false`), `comment`.
 
+### `input`
+
+Pauses the run until someone fills in a form on the run page; the values
+become the step's outputs. Waiting survives restarts; `timeout` limits it.
+
+| Field     | Required | Value                                                                                                                      |
+| --------- | -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `message` | no       | Shown above the form; `{{ }}` allowed.                                                                                     |
+| `fields`  | yes      | List of fields, defined like [inputs](#inputs) (`name`, `label`, `type`, `options`, `default`, `required`, `description`). |
+
+`{{ }}` is allowed in a field's `label`, `description` and `default`.
+
+Outputs: one per field, by `name`, typed as declared.
+
+```yaml
+conductor: 1
+name: Input example
+steps:
+  - id: ask
+    block: input
+    timeout: 4h
+    config:
+      message: Where should this go?
+      fields:
+        - name: env
+          type: select
+          options: [staging, production]
+          required: true
+        - name: replicas
+          type: number
+          default: 2
+  - id: deploy
+    block: shell
+    needs: [ask]
+    config:
+      command: ./deploy.sh "$ENV" "$REPLICAS"
+      env:
+        ENV: "{{ steps.ask.outputs.env }}"
+        REPLICAS: "{{ steps.ask.outputs.replicas }}"
+```
+
 ### `workflow`
 
 Runs another saved workflow as one step (a child run) and uses its outputs.
@@ -422,7 +470,7 @@ steps:
    per run.
 2. One step per action; give each a short `id`. Pick the block: `shell` for
    commands, `script` for logic, `http` for APIs, `approval` to pause,
-   `workflow` to reuse a workflow.
+   `input` to ask for values mid-run, `workflow` to reuse a workflow.
 3. Add `needs` for order **and** for every step whose outputs a step reads.
 4. Pass values with expressions, quoted; put secrets in `env` or headers, not
    in command text.

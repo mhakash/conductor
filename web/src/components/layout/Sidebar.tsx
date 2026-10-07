@@ -23,7 +23,7 @@ const nav: NavItem[] = [
  */
 export function Sidebar({ rail = false }: { rail?: boolean }) {
   const wide = !rail
-  // Runs waiting for approval need you, wherever you are in the app.
+  // Runs waiting for an answer need you, wherever you are in the app.
   const waiting = useWaitingRuns().data?.length ?? 0
   return (
     <aside
@@ -68,7 +68,7 @@ export function Sidebar({ rail = false }: { rail?: boolean }) {
 
 function SidebarLink({ item, wide, badge }: { item: NavItem; wide: boolean; badge: number }) {
   const Icon = item.icon
-  const waitingLabel = badge > 0 ? `${badge} waiting for approval` : ''
+  const waitingLabel = badge > 0 ? `${badge} waiting for you` : ''
   return (
     // When labels are visible the tooltip would repeat them, so hide it.
     <Tooltip

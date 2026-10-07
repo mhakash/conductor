@@ -25,12 +25,12 @@ with the same ancestor rules as config expressions (ADR 0005).
 
 Once everything a step depends on has finished:
 
-| Dependencies                                 | The step                                   |
-| -------------------------------------------- | ------------------------------------------ |
-| any failed (without continue-on-error)       | is skipped, and so is everything below it  |
-| any cancelled                                | is cancelled, and everything below it      |
-| **all** skipped                              | is skipped (“because x was skipped”)       |
-| otherwise                                    | evaluates its condition, then runs         |
+| Dependencies                           | The step                                  |
+| -------------------------------------- | ----------------------------------------- |
+| any failed (without continue-on-error) | is skipped, and so is everything below it |
+| any cancelled                          | is cancelled, and everything below it     |
+| **all** skipped                        | is skipped (“because x was skipped”)      |
+| otherwise                              | evaluates its condition, then runs        |
 
 The “all skipped” rule makes conditions work as branches without extra
 syntax: a false condition skips its whole branch, while a step that joins
@@ -74,6 +74,12 @@ approvals are all it has left, the run show as `waiting`. Approving
 succeeds the step; rejecting fails it (so, by default, skips what follows).
 Outputs: `approved`, `comment`. Without a timeout it waits indefinitely; a
 timeout counts from when it started waiting.
+
+The `input` block waits the same way, for values instead of a decision. Its
+fields are defined like workflow inputs (same types, coercion and defaults),
+and the values become its outputs. Values that don't fit are refused and the
+step keeps waiting; there is no "reject" — cancelling the run stops it.
+Everything below about waiting applies to both.
 
 **Waiting survives restarts.** On shutdown, a run with an approval waiting
 is not cancelled: running steps are interrupted (recorded as cancelled, since

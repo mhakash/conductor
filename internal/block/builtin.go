@@ -4,7 +4,7 @@ import "conductor/internal/workflow"
 
 // Builtin returns the blocks that ship with Conductor.
 func Builtin() *Registry {
-	return NewRegistry(Shell, Script, HTTP, Approval, Workflow)
+	return NewRegistry(Shell, Script, HTTP, Approval, Input, Workflow)
 }
 
 // Workflow runs another workflow as one step. Like Approval it has no
@@ -47,6 +47,29 @@ var Approval = Block{
 		{Key: "approved", Description: "true if approved"},
 		{Key: "comment", Description: "Comment left with the decision"},
 	},
+}
+
+// Input is run by the engine too: it pauses the run until someone fills in
+// its fields on the run page. Its outputs are those fields, so it declares
+// none here.
+var Input = Block{
+	Type:        workflow.InputBlock,
+	Name:        "Input",
+	Description: "Pause the run until you fill in a form on the run page. Later steps read the values as its outputs.",
+	Category:    "Control",
+	Icon:        "form",
+	Fields: []Field{
+		{
+			Key: "message", Label: "Message", Type: FieldTextarea,
+			Placeholder: "Which environment should {{ inputs.service }} go to?",
+			Help:        "Shown above the form while it waits. Without a timeout it waits indefinitely, even if Conductor restarts.",
+		},
+		{
+			Key: "fields", Label: "Fields", Type: FieldForm, Required: true,
+			Help: "Later steps read each as steps.<id>.outputs.<name>. Defaults may use {{ }}.",
+		},
+	},
+	Outputs: []Output{},
 }
 
 var Shell = Block{

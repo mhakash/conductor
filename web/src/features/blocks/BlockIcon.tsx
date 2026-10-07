@@ -4,6 +4,7 @@ import {
   Globe,
   Hand,
   Terminal,
+  TextCursorInput,
   Workflow,
   type LucideIcon,
   type LucideProps,
@@ -16,6 +17,7 @@ const icons: Record<string, LucideIcon> = {
   hand: Hand,
   code: Code,
   workflow: Workflow,
+  form: TextCursorInput,
 }
 
 export function BlockIcon({ name, ...props }: { name: string } & LucideProps) {

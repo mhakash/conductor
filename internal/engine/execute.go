@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"conductor/internal/block"
 	"conductor/internal/run"
 	"conductor/internal/secrets"
 	"conductor/internal/tmpl"
@@ -296,8 +295,8 @@ func (rn *runner) ready(id string) {
 		}
 	}
 
-	if s.Block == block.ApprovalType {
-		rn.startApproval(s, env)
+	if waits(s.Block) {
+		rn.startWaiting(s, env)
 		return
 	}
 	resuming := rn.stored[id].Status == run.StatusRunning

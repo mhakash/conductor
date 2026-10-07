@@ -3,11 +3,10 @@ import { Play } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 
 import { Button } from '@/components/ui/Button'
-import { FormField, Input } from '@/components/ui/Input'
 import type { WorkflowInput } from '@/features/workflows/api'
-import { cn } from '@/lib/cn'
 
-type Values = Record<string, string | boolean>
+import { InputFields } from './InputFields'
+import { filledValues, initialValues, type InputValues } from './inputValues'
 
 type StartRunDialogProps = {
   open: boolean
@@ -19,16 +18,6 @@ type StartRunDialogProps = {
   pending: boolean
   errors: string[]
   onSubmit: (values: Record<string, unknown>) => void
-}
-
-function initialValues(inputs: WorkflowInput[], initial?: Record<string, unknown>): Values {
-  return Object.fromEntries(
-    inputs.map((i) => {
-      const v = initial?.[i.name] ?? i.default
-      if (i.type === 'boolean') return [i.name, v === true || v === 'true']
-      return [i.name, v === undefined || v === null ? '' : String(v)]
-    }),
-  )
 }
 
 export function StartRunDialog({
@@ -73,69 +62,21 @@ function RunForm({
   errors,
   onSubmit,
 }: Pick<StartRunDialogProps, 'inputs' | 'initial' | 'pending' | 'errors' | 'onSubmit'>) {
-  const [values, setValues] = useState<Values>(() => initialValues(inputs, initial))
-  const set = (name: string, v: string | boolean) => setValues((prev) => ({ ...prev, [name]: v }))
+  const [values, setValues] = useState<InputValues>(() => initialValues(inputs, initial))
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    // The server applies defaults and types; blanks mean "use the default".
-    onSubmit(Object.fromEntries(Object.entries(values).filter(([, v]) => v !== '')))
+    onSubmit(filledValues(values))
   }
 
   return (
     <form onSubmit={submit} className="mt-5 flex flex-col gap-4">
-      {inputs.map((i) => {
-        const id = `run-input-${i.name}`
-        if (i.type === 'boolean') {
-          const on = values[i.name] === true
-          return (
-            <label key={i.name} htmlFor={id} className="flex items-center justify-between gap-3">
-              <span>
-                <span className="block text-xs font-medium text-fg-muted">{i.label || i.name}</span>
-                {i.description && (
-                  <span className="block text-xs text-fg-subtle">{i.description}</span>
-                )}
-              </span>
-              <button
-                id={id}
-                type="button"
-                role="switch"
-                aria-checked={on}
-                onClick={() => set(i.name, !on)}
-                className={cn(
-                  'relative h-5 w-9 shrink-0 rounded-full transition-colors',
-                  on ? 'bg-brass' : 'bg-line-strong',
-                )}
-              >
-                <span
-                  className={cn(
-                    'absolute top-0.5 left-0.5 size-4 rounded-full bg-fg transition-transform',
-                    on && 'translate-x-4',
-                  )}
-                />
-              </button>
-            </label>
-          )
-        }
-        return (
-          <FormField
-            key={i.name}
-            label={i.label || i.name}
-            htmlFor={id}
-            required={i.required}
-            help={i.description}
-          >
-            <Input
-              id={id}
-              type={i.type === 'number' ? 'number' : 'text'}
-              value={String(values[i.name] ?? '')}
-              placeholder={i.default !== undefined ? String(i.default) : undefined}
-              className={i.type === 'text' ? 'font-mono text-xs' : undefined}
-              onChange={(e) => set(i.name, e.target.value)}
-            />
-          </FormField>
-        )
-      })}
+      <InputFields
+        inputs={inputs}
+        values={values}
+        onChange={(name, v) => setValues((prev) => ({ ...prev, [name]: v }))}
+        idPrefix="run-input"
+      />
 
       {errors.length > 0 && (
         <ul className="rounded-lg border border-coral/30 bg-coral/5 px-3 py-2 text-xs text-coral">

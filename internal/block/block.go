@@ -27,6 +27,9 @@ const (
 	// FieldInputs holds values for the inputs of the workflow chosen in the
 	// block's FieldWorkflow field, by input name.
 	FieldInputs FieldType = "inputs"
+	// FieldForm holds a list of fields to ask for, defined like the
+	// workflow's inputs (workflow.Input).
+	FieldForm FieldType = "form"
 )
 
 type Option struct {

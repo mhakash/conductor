@@ -284,8 +284,15 @@ func evalItems(src string, env map[string]any) ([]any, error) {
 	return items, nil
 }
 
-// startApproval records an approval step as waiting and waits for a decision.
-func (rn *runner) startApproval(s workflow.Step, exprEnv map[string]any) {
+// waits reports whether steps of a block wait for someone instead of doing
+// work: approval and input steps.
+func waits(blockType string) bool {
+	return blockType == block.ApprovalType || blockType == workflow.InputBlock
+}
+
+// startWaiting records an approval or input step as waiting and waits for
+// an answer.
+func (rn *runner) startWaiting(s workflow.Step, exprEnv map[string]any) {
 	config, err := tmpl.RenderConfig(s.Config, exprEnv, rn.e.blocks.Literal(s.Block)...)
 	if err != nil {
 		config = s.Config
@@ -302,15 +309,29 @@ func (rn *runner) startApproval(s workflow.Step, exprEnv map[string]any) {
 	}
 	rn.publishStep(stepResult{id: s.ID, config: recorded, startedAt: &startedAt}, run.StatusWaiting)
 	env, flush := rn.sink.envFor(s.ID, nil)
-	env.Logf("Waiting for approval")
+	if s.Block == workflow.InputBlock {
+		env.Logf("Waiting for input")
+	} else {
+		env.Logf("Waiting for approval")
+	}
 	flush()
 	rn.await(s, recorded, startedAt)
 }
 
-// await waits for a decision on an approval step, its timeout (counted from
-// when it started waiting, across restarts), or the run ending.
+// await waits for an answer to an approval or input step, its timeout
+// (counted from when it started waiting, across restarts), or the run
+// ending. config is the step's config as recorded when it started waiting.
 func (rn *runner) await(s workflow.Step, config json.RawMessage, startedAt time.Time) {
-	decisions := rn.e.addApproval(rn.r.ID, s.ID)
+	var form *workflow.Form
+	if s.Block == workflow.InputBlock {
+		f, err := workflow.ParseForm(config)
+		if err != nil {
+			rn.complete(stepResult{id: s.ID, status: run.StatusFailed, err: err.Error(), config: config, startedAt: &startedAt})
+			return
+		}
+		form = &f
+	}
+	answers := rn.e.addWaiter(rn.r.ID, s.ID, form)
 	var deadline <-chan time.Time
 	var timeout time.Duration
 	stop := func() bool { return false }
@@ -324,11 +345,17 @@ func (rn *runner) await(s workflow.Step, config json.RawMessage, startedAt time.
 	rn.waiting[s.ID] = true
 	go func() {
 		defer stop()
-		defer rn.e.removeApproval(rn.r.ID, s.ID)
+		defer rn.e.removeWaiter(rn.r.ID, s.ID)
 		res := stepResult{id: s.ID, config: config, startedAt: &startedAt}
 		env, flush := rn.sink.envFor(s.ID, nil)
 		select {
-		case d := <-decisions:
+		case a := <-answers:
+			if form != nil {
+				res.outputs, res.status = a.values, run.StatusSucceeded
+				env.Logf("Received input")
+				break
+			}
+			d := a.decision
 			res.outputs = map[string]any{"approved": d.Approve, "comment": d.Comment}
 			verdict := "Approved"
 			if !d.Approve {
@@ -343,7 +370,11 @@ func (rn *runner) await(s workflow.Step, config json.RawMessage, startedAt time.
 				res.status, res.err = run.StatusFailed, verdict
 			}
 		case <-deadline:
-			res.status, res.err = run.StatusFailed, fmt.Sprintf("no decision within %s", timeout)
+			what := "decision"
+			if form != nil {
+				what = "input"
+			}
+			res.status, res.err = run.StatusFailed, fmt.Sprintf("no %s within %s", what, timeout)
 			env.Logf("%s", res.err)
 		case <-rn.ctx.Done():
 			if errors.Is(context.Cause(rn.ctx), errShutdown) {

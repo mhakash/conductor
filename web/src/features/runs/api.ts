@@ -13,7 +13,7 @@ export const statusLabel = (s: RunStatus) =>
   ({
     queued: 'Queued',
     running: 'Running',
-    waiting: 'Waiting for approval',
+    waiting: 'Waiting for you',
     succeeded: 'Succeeded',
     failed: 'Failed',
     cancelled: 'Cancelled',
@@ -110,7 +110,7 @@ export function useRuns(workflowId?: string) {
   })
 }
 
-/** Runs waiting for someone to approve a step, for the sidebar. */
+/** Runs waiting for someone to answer a step, for the sidebar. */
 export function useWaitingRuns() {
   return useQuery({
     queryKey: [...keys.lists, 'waiting'],
@@ -177,6 +177,16 @@ export function useDecide(runId: string) {
       approve: boolean
       comment: string
     }) => api.post<void>(`/runs/${runId}/steps/${stepId}/decision`, { approve, comment }),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.lists }),
+  })
+}
+
+/** Gives values to a waiting input step; values that don't fit come back as problems. */
+export function useRespond(runId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ stepId, values }: { stepId: string; values: Record<string, unknown> }) =>
+      api.post<void>(`/runs/${runId}/steps/${stepId}/response`, { values }),
     onSettled: () => qc.invalidateQueries({ queryKey: keys.lists }),
   })
 }

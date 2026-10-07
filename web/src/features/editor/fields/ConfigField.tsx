@@ -2,8 +2,11 @@ import { FormField, Input, Select, Textarea } from '@/components/ui/Input'
 import type { Field } from '@/features/blocks/api'
 import { cn } from '@/lib/cn'
 
+import type { WorkflowInput } from '@/features/workflows/api'
+
 import { CodeField } from './CodeField'
 import { ExpandableCodeField } from './ExpandableCodeField'
+import { InputDefsEditor } from './InputDefsEditor'
 import { KeyValueField } from './KeyValueField'
 import { CallInputsField, WorkflowField } from './WorkflowFields'
 
@@ -119,6 +122,18 @@ export function ConfigField({ field, value, onChange, config }: ConfigFieldProps
                 value={(value as Record<string, string> | undefined) ?? {}}
                 onChange={onChange}
               />
+            )
+          case 'form':
+            return (
+              <div id={id} className="flex flex-col gap-2">
+                <InputDefsEditor
+                  value={(value as WorkflowInput[] | undefined) ?? []}
+                  onChange={onChange}
+                  noun="field"
+                  firstName="answer"
+                  exprDefaults
+                />
+              </div>
             )
           default:
             return (

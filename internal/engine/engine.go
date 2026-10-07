@@ -23,9 +23,9 @@ const DefaultStepTimeout = time.Hour
 
 var (
 	ErrNotActive = errors.New("run is not active")
-	// ErrNotWaiting means a decision was sent for a step that isn't waiting
-	// for one (any more).
-	ErrNotWaiting = errors.New("step is not waiting for approval")
+	// ErrNotWaiting means a decision or values were sent for a step that
+	// isn't waiting for them (any more).
+	ErrNotWaiting = errors.New("step is not waiting for an answer")
 )
 
 // errShutdown is the cancellation cause when Conductor itself is stopping.
@@ -61,8 +61,9 @@ type Engine struct {
 
 	mu     sync.Mutex
 	active map[string]activeRun
-	// approvals delivers decisions to waiting approval steps, by approvalKey.
-	approvals map[string]chan Decision
+	// waiters delivers answers to waiting approval and input steps, by
+	// waiterKey.
+	waiters map[string]waiter
 	// watchers hear about status changes of child runs, by child run id.
 	watchers map[string]func(run.Status)
 	wg       sync.WaitGroup
@@ -110,7 +111,7 @@ func New(o Options) *Engine {
 		maxParallel: o.MaxParallel,
 		now:         func() time.Time { return time.Now().UTC() },
 		active:      map[string]activeRun{},
-		approvals:   map[string]chan Decision{},
+		waiters:     map[string]waiter{},
 		watchers:    map[string]func(run.Status){},
 	}
 }
@@ -262,38 +263,71 @@ func (e *Engine) abandon(ctx context.Context, r run.Run, msg string) {
 	}
 }
 
+// waiter is a step waiting for someone: an approval step for a decision,
+// or an input step (form set) for values.
+type waiter struct {
+	answers chan answer
+	form    *workflow.Form
+}
+
+// answer is a decision for an approval step, or values for an input step.
+type answer struct {
+	decision Decision
+	values   map[string]any
+}
+
 // Decide approves or rejects an approval step that is waiting.
 func (e *Engine) Decide(runID, stepID string, d Decision) error {
+	return e.answer(runID, stepID, false, func(waiter) (answer, error) {
+		return answer{decision: d}, nil
+	})
+}
+
+// Respond gives values to an input step that is waiting. Values that don't
+// fit its fields are returned as a *workflow.ValidationError, and the step
+// keeps waiting.
+func (e *Engine) Respond(runID, stepID string, values map[string]any) error {
+	return e.answer(runID, stepID, true, func(w waiter) (answer, error) {
+		resolved, err := workflow.ResolveFields(w.form.Fields, values)
+		return answer{values: resolved}, err
+	})
+}
+
+func (e *Engine) answer(runID, stepID string, form bool, build func(waiter) (answer, error)) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if _, ok := e.active[runID]; !ok {
 		return ErrNotActive
 	}
-	key := approvalKey(runID, stepID)
-	decisions, ok := e.approvals[key]
-	if !ok {
+	key := waiterKey(runID, stepID)
+	w, ok := e.waiters[key]
+	if !ok || (w.form != nil) != form {
 		return ErrNotWaiting
 	}
-	delete(e.approvals, key) // a second click gets ErrNotWaiting
-	decisions <- d           // buffered; the step reads it
+	a, err := build(w)
+	if err != nil {
+		return err
+	}
+	delete(e.waiters, key) // a second click gets ErrNotWaiting
+	w.answers <- a         // buffered; the step reads it
 	return nil
 }
 
-func (e *Engine) addApproval(runID, stepID string) <-chan Decision {
-	ch := make(chan Decision, 1)
+func (e *Engine) addWaiter(runID, stepID string, form *workflow.Form) <-chan answer {
+	ch := make(chan answer, 1)
 	e.mu.Lock()
-	e.approvals[approvalKey(runID, stepID)] = ch
+	e.waiters[waiterKey(runID, stepID)] = waiter{answers: ch, form: form}
 	e.mu.Unlock()
 	return ch
 }
 
-func (e *Engine) removeApproval(runID, stepID string) {
+func (e *Engine) removeWaiter(runID, stepID string) {
 	e.mu.Lock()
-	delete(e.approvals, approvalKey(runID, stepID))
+	delete(e.waiters, waiterKey(runID, stepID))
 	e.mu.Unlock()
 }
 
-func approvalKey(runID, stepID string) string { return runID + "/" + stepID }
+func waiterKey(runID, stepID string) string { return runID + "/" + stepID }
 
 // loadSecrets decrypts every secret the workflow's expressions reference.
 // Missing ones are reported against the steps that use them.
@@ -437,9 +471,9 @@ func (e *Engine) Check(ctx context.Context, wf workflow.Workflow) error {
 			})
 		}
 		switch {
-		case s.Block == block.ApprovalType && (s.Retry != nil || s.ForEach != nil):
-			problems = append(problems, workflow.Problem{Step: s.ID, Message: fmt.Sprintf("step %q: approval steps can't retry or run once per item", s.ID)})
-		case s.Block != block.ApprovalType && s.Block != workflow.CallBlock && b.Run == nil:
+		case waits(s.Block) && (s.Retry != nil || s.ForEach != nil):
+			problems = append(problems, workflow.Problem{Step: s.ID, Message: fmt.Sprintf("step %q: %s steps can't retry or run once per item", s.ID, s.Block)})
+		case !waits(s.Block) && s.Block != workflow.CallBlock && b.Run == nil:
 			problems = append(problems, workflow.Problem{Step: s.ID, Message: fmt.Sprintf("block %q can't run yet", s.Block)})
 		}
 	}
