@@ -4,6 +4,8 @@ A personal workflow builder and task runner. Workflows are graphs of steps —
 shell commands, scripts, HTTP calls, approvals and other workflows — that run with
 dependencies and parallelism, and are edited and watched on a visual canvas.
 
+<img src="docs/images/canvas.webp" alt="Workflow canvas with a test run" width="800">
+
 Docs index: [docs/README.md](docs/README.md). Decisions:
 [docs/adr](docs/adr).
 
