@@ -11,6 +11,17 @@ import { FlowPreview } from './FlowPreview'
 import { ImportDialog } from './ImportDialog'
 import { WorkflowList } from './WorkflowList'
 
+const UNTITLED = 'Untitled workflow'
+
+/** "Untitled workflow", then "Untitled workflow 2", 3, … — the first one not taken. */
+function nextUntitledName(taken: string[]): string {
+  const used = new Set(taken)
+  if (!used.has(UNTITLED)) return UNTITLED
+  let n = 2
+  while (used.has(`${UNTITLED} ${n}`)) n++
+  return `${UNTITLED} ${n}`
+}
+
 export function WorkflowsPage() {
   const workflows = useWorkflows()
   const create = useCreateWorkflow()
@@ -19,7 +30,7 @@ export function WorkflowsPage() {
 
   const createWorkflow = () =>
     create.mutate(
-      { name: 'Untitled workflow', description: '' },
+      { name: nextUntitledName(workflows.data?.map((w) => w.name) ?? []), description: '' },
       {
         onSuccess: (wf) => navigate(`/workflows/${wf.id}`),
         onError: (err) => toast.error(`Couldn't create the workflow: ${err.message}`),
